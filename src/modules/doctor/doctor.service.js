@@ -39,8 +39,12 @@ import {
   updateDoctorSchedule,
   deleteDoctorSchedule,
   findDoctorSchedules,
-  findDoctorScheduleById
+  findDoctorScheduleById,
+  upsertScheduleException,
+  listScheduleExceptions,
+  deleteScheduleException,
 } from "./doctor.repository.js";
+import { logAudit } from "../audit/audit.service.js";
 
 export const searchByName = async (name) => {
   return searchDoctorsByName(name);
@@ -369,7 +373,18 @@ export const markDoctorOnLeave = async (user, doctorId, clinicId, date, reason) 
   const existing = await findLeaveForDate(doctorId, clinicId, date);
   if (existing) throw new ApiError(409, "Doctor is already marked on leave for this date");
 
-  return createDoctorLeave(doctorId, clinicId, date, reason);
+  const leave = await createDoctorLeave(doctorId, clinicId, date, reason);
+
+  await logAudit({
+    actorUserId: user.id,
+    actorRole: user.role,
+    action: "DOCTOR_MARKED_ON_LEAVE",
+    targetType: "Doctor",
+    targetId: doctorId,
+    meta: { clinicId, date, reason },
+  });
+
+  return leave;
 };
 
 export const cancelDoctorLeave = async (user, doctorId, clinicId, date) => {
@@ -607,6 +622,56 @@ export const removeSchedule = async (user, doctorId, clinicId, scheduleId) => {
 
 export const listSchedules = async (doctorId, clinicId) => {
   return findDoctorSchedules(doctorId, clinicId);
+};
+
+// === Schedule Exceptions (Step 13) ===
+export const setScheduleException = async (user, scheduleId, payload) => {
+  const schedule = await findDoctorScheduleById(scheduleId);
+  if (!schedule) throw new ApiError(404, "Schedule not found");
+  await assertDoctorClinicManageAccess(user, schedule.doctorId, schedule.clinicId);
+
+  const exception = await upsertScheduleException(scheduleId, payload.date, {
+    isCancelled: !!payload.isCancelled,
+    overrideStartTime: payload.overrideStartTime || null,
+    overrideEndTime: payload.overrideEndTime || null,
+    overrideMaxPatients: payload.overrideMaxPatients ?? null,
+    reason: payload.reason || null,
+  });
+
+  await logAudit({
+    actorUserId: user.id,
+    actorRole: user.role,
+    action: exception.isCancelled ? "SCHEDULE_CANCELLED_FOR_DATE" : "SCHEDULE_OVERRIDDEN_FOR_DATE",
+    targetType: "DoctorSchedule",
+    targetId: scheduleId,
+    meta: { date: payload.date, doctorId: schedule.doctorId, clinicId: schedule.clinicId },
+  });
+
+  return exception;
+};
+
+export const getScheduleExceptions = async (user, scheduleId) => {
+  const schedule = await findDoctorScheduleById(scheduleId);
+  if (!schedule) throw new ApiError(404, "Schedule not found");
+  await assertDoctorClinicManageAccess(user, schedule.doctorId, schedule.clinicId);
+  return listScheduleExceptions(scheduleId);
+};
+
+export const removeScheduleException = async (user, scheduleId, exceptionId) => {
+  const schedule = await findDoctorScheduleById(scheduleId);
+  if (!schedule) throw new ApiError(404, "Schedule not found");
+  await assertDoctorClinicManageAccess(user, schedule.doctorId, schedule.clinicId);
+  await deleteScheduleException(exceptionId);
+
+  await logAudit({
+    actorUserId: user.id,
+    actorRole: user.role,
+    action: "SCHEDULE_EXCEPTION_REMOVED",
+    targetType: "DoctorSchedule",
+    targetId: scheduleId,
+  });
+
+  return { deleted: true };
 };
 
 // === NEW: Step 29 Advanced Search ===

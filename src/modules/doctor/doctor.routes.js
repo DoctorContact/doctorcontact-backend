@@ -158,6 +158,28 @@ router.delete(
   doctorController.deleteSchedule
 );
 
+// === Step 13: Schedule Exceptions ===
+router.get(
+  "/schedules/:scheduleId/exceptions",
+  authMiddleware,
+  roleMiddleware("DOCTOR", "CLINIC", "RECEPTIONIST", "SUPER_ADMIN", "ADMIN"),
+  doctorController.getScheduleExceptions
+);
+
+router.post(
+  "/schedules/:scheduleId/exceptions",
+  authMiddleware,
+  roleMiddleware("DOCTOR", "CLINIC", "SUPER_ADMIN", "ADMIN"),
+  doctorController.setScheduleException
+);
+
+router.delete(
+  "/schedules/:scheduleId/exceptions/:exceptionId",
+  authMiddleware,
+  roleMiddleware("DOCTOR", "CLINIC", "SUPER_ADMIN", "ADMIN"),
+  doctorController.deleteScheduleException
+);
+
 // =========================================================================
 // 5. GENERIC ID ROUTE (MUST BE ABSOLUTELY LAST)
 // =========================================================================

@@ -25,7 +25,6 @@ export const bookReceptionAppointmentSchema = z.object({
   newPatient: z.object({
     name: z.string(),
     phone: z.string(),
-    age: z.number().optional(),
   }).optional(),
   bookingSource: z.enum(["RECEPTION", "WALK_IN", "PHONE"]).optional(),
 }).refine(data => data.patientId || data.newPatient, {
@@ -37,7 +36,6 @@ export const walkInAppointmentSchema = z.object({
   scheduleId: z.string().uuid("scheduleId is required for walk-in"), // NEW
   name: z.string().min(2, "Patient name is required"),
   phone: z.string().regex(/^\+?[1-9]\d{1,14}$/, "Valid phone number required"),
-  age: z.number().optional(),
 });
 
 export const cancelAppointmentSchema = z.object({

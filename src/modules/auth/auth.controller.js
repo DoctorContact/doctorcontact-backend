@@ -5,8 +5,10 @@ import { COOKIE_OPTIONS } from "./auth.constants.js";
 import {
   registerSchema,
   loginSchema,
+  patientPhoneAuthSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
+  resetPasswordByPhoneSchema,
 } from "./auth.validation.js";
 
 import * as authService from "./auth.service.js";
@@ -77,6 +79,26 @@ export const login = asyncHandler(async (req, res) => {
   );
 });
 
+// ==================== PATIENT PHONE/OTP LOGIN (& SIGNUP) ====================
+
+export const patientPhoneAuth = asyncHandler(async (req, res) => {
+  const data = patientPhoneAuthSchema.parse(req.body);
+
+  const { user, accessToken, refreshToken, isNewAccount } =
+    await authService.patientPhoneAuth(data);
+
+  res.cookie("refreshToken", refreshToken, COOKIE_OPTIONS);
+
+  res.status(200).json(
+    new ApiResponse(true, isNewAccount ? "Account created" : "Login successful", {
+      user,
+      accessToken,
+      refreshToken,
+      isNewAccount,
+    })
+  );
+});
+
 // ==================== REFRESH TOKEN ====================
 
 export const refresh = asyncHandler(async (req, res) => {
@@ -140,6 +162,20 @@ export const resetPassword = asyncHandler(async (req, res) => {
   const data = resetPasswordSchema.parse(req.body);
 
   await authService.resetPassword(data);
+
+  res
+    .status(200)
+    .json(
+      new ApiResponse(true, "Password reset successfully")
+    );
+});
+
+// ==================== RESET PASSWORD (PHONE) ====================
+
+export const resetPasswordByPhone = asyncHandler(async (req, res) => {
+  const data = resetPasswordByPhoneSchema.parse(req.body);
+
+  await authService.resetPasswordByPhone(data);
 
   res
     .status(200)

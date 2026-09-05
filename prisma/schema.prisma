@@ -568,7 +568,7 @@ model DoctorSpecialization {
 }
 
 model DoctorSchedule {
-  id                String         @id @default(uuid())
+  id                String              @id @default(uuid())
   doctorId          String
   clinicId          String
   startTime         String
@@ -576,15 +576,55 @@ model DoctorSchedule {
   maxPatients       Int
   recurrenceType    RecurrenceType // DAILY, WEEKLY, MONTHLY_DATE, MONTHLY_WEEKDAY
   recurrencePattern Json
-  isActive          Boolean        @default(true)
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
-  clinic            Clinic         @relation(fields: [clinicId], references: [id], onDelete: Cascade)
-  doctor            Doctor         @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  isActive          Boolean             @default(true)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  clinic            Clinic              @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  doctor            Doctor              @relation(fields: [doctorId], references: [id], onDelete: Cascade)
   queues            Queue[]
+  exceptions        ScheduleException[]
 
   @@index([doctorId, clinicId])
   @@map("doctor_schedules")
+}
+
+// A one-off override/cancellation for a recurring schedule on a specific
+// date (Step 13). If isCancelled, the schedule simply doesn't run that day.
+// Otherwise, any non-null override* value replaces the schedule's normal
+// value for that date only — the recurring schedule itself is untouched.
+model ScheduleException {
+  id                  String         @id @default(uuid())
+  scheduleId          String
+  date                DateTime       @db.Date
+  isCancelled         Boolean        @default(false)
+  overrideStartTime   String?
+  overrideEndTime     String?
+  overrideMaxPatients Int?
+  reason              String?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  schedule            DoctorSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  @@unique([scheduleId, date])
+  @@map("schedule_exceptions")
+}
+
+// General administrative audit trail (Step 53) — separate from QueueLog,
+// which only covers queue-control actions. Fire-and-forget: a logging
+// failure must never break the action it's describing.
+model AuditLog {
+  id           String   @id @default(uuid())
+  actorUserId  String?
+  actorRole    Role?
+  action       String
+  targetType   String?
+  targetId     String?
+  meta         Json?
+  createdAt    DateTime @default(now())
+
+  @@index([targetType, targetId])
+  @@index([actorUserId])
+  @@map("audit_logs")
 }
 
 model DiagnosticTest {

@@ -3,6 +3,13 @@ import prisma from "../../config/db.config.js";
 import { findClinicByUserId, findReceptionistByUserId } from "../clinic/clinic.repository.js";
 import { findReceptionistAssignment } from "../queue/queue.repository.js";
 import { notifyUser } from "../notification/notification.service.js";
+import { normalizePhone } from "../../utils/phoneNormalizer.js";
+// Patient lookup/creation is owned by the patient module (single source of
+// truth for patient records) — reused here instead of duplicating it, so
+// walk-in/reception bookings and the receptionist "quick add" screen always
+// dedupe against the same phone-keyed Patient/User records.
+import { findPatientByPhone, createGuestPatient } from "../patient/patient.repository.js";
+import { logAudit } from "../audit/audit.service.js";
 import {
   searchDoctors,
   getBookableClinicsForDoctor,
@@ -10,7 +17,6 @@ import {
   getDoctorById,
   getPatientById,
   createAppointmentWithToken,
-  createWalkInPatient,
   findAppointmentsForPatient,
   getQueueModeForDoctorClinic,
   getClinicById,
@@ -20,7 +26,7 @@ import {
   getConsultationMinutesForDoctorClinic,
   findAppointmentByIdFull,
   cancelAppointmentRecord,
-  findPatientByPhone,
+  findConflictingAppointmentForPatient,
   getDoctorLeaveForDate // <--- ADD THIS HERE
 } from "./appointment.repository.js";
 import { emitQueueUpdate } from "../../sockets/queue.socket.js";
@@ -74,7 +80,11 @@ export const bookReceptionAppointment = async (
   let finalPatientId = patientId;
 
   if (!finalPatientId && newPatient) {
-    const patient = await createWalkInPatient(newPatient);
+    const patient = await createGuestPatient({
+      name: newPatient.name,
+      phone: normalizePhone(newPatient.phone),
+      gender: newPatient.gender,
+    });
     finalPatientId = patient.id;
   } else if (finalPatientId) {
     const existing = await getPatientById(finalPatientId);
@@ -169,6 +179,15 @@ export const cancelAppointment = async (user, appointmentId, reason) => {
   const cancelled = await cancelAppointmentRecord(appointmentId, {
     cancelReason: reason,
     cancelledBy: user.id,
+  });
+
+  await logAudit({
+    actorUserId: user.id,
+    actorRole: user.role,
+    action: "APPOINTMENT_CANCELLED",
+    targetType: "Appointment",
+    targetId: appointmentId,
+    meta: { doctorId: appointment.doctorId, clinicId: appointment.clinicId, reason },
   });
 
   if (appointment.patient.userId) {
@@ -275,6 +294,25 @@ const bookAppointmentCore = async ({ doctorId, clinicId, scheduleId, patientId, 
       throw new ApiError(400, "Queue is closed for this session");
     }
 
+    // Rule: no patient should end up double-booked — either two tokens with
+    // the same doctor, or two different doctors within 45 minutes of each
+    // other on the same day (they physically can't be in two places at once).
+    const conflict = await findConflictingAppointmentForPatient({
+      patientId,
+      date,
+      scheduleStartTime: schedule.startTime,
+      excludeDoctorId: doctorId,
+    });
+    if (conflict) {
+      const doctorName = conflict.appointment.doctor?.user?.name || "another doctor";
+      throw new ApiError(
+        409,
+        conflict.sameDoctor
+          ? `You already have an active appointment (Token #${conflict.appointment.token}) with this doctor on ${date}.`
+          : `You already have an appointment with Dr. ${doctorName} (Token #${conflict.appointment.token}) at ${conflict.appointment.queue.schedule.startTime} on ${date} — please choose a time at least 45 minutes away.`
+      );
+    }
+
     const { appointment, queue: updatedQueue } = await createAppointmentWithToken({
       doctorId,
       clinicId,
@@ -330,6 +368,11 @@ const bookAppointmentCore = async ({ doctorId, clinicId, scheduleId, patientId, 
     return appointment;
   } catch (error) {
     if (error instanceof ApiError) throw error;
+    if (error.code === "P2034") {
+      // Serializable transaction conflict — another booking for the same
+      // schedule/queue committed first. Not a real failure, just contention.
+      throw new ApiError(409, "This slot was just booked by someone else — please try again.");
+    }
     throw new ApiError(500, `Booking failed: ${error.message}`);
   }
 };
@@ -365,7 +408,8 @@ const assertClinicOperational = async (clinicId, date, { isOnlineBooking }, doct
   }
 };
 
-export const processWalkInAppointment = async (user, { doctorId, scheduleId, phone, name, age }) => {
+export const processWalkInAppointment = async (user, { doctorId, scheduleId, phone, name }) => {
+  const normalizedPhone = normalizePhone(phone);
   let clinicId;
 
   if (user.role === "CLINIC") {
@@ -382,9 +426,9 @@ export const processWalkInAppointment = async (user, { doctorId, scheduleId, pho
 
   await assertBookableClinic(doctorId, clinicId);
 
-  let patient = await findPatientByPhone(phone);
+  let patient = await findPatientByPhone(normalizedPhone);
   if (!patient) {
-    patient = await createWalkInPatient({ name, age: Number(age), phone });
+    patient = await createGuestPatient({ name, phone: normalizedPhone });
   }
 
   const today = new Date();

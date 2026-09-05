@@ -1,12 +1,11 @@
 export const normalizePhone = (phone) => {
-  if (!phone) return phone;
+  if (!phone) return null;
+  // Remove everything except numbers
+  let cleaned = phone.replace(/\D/g, ''); 
   
-  // Strip all non-digit characters except '+'
-  let cleaned = phone.replace(/[^\d+]/g, "");
-  
-  // If exactly 10 digits and no country code, append +91
-  if (cleaned.length === 10 && !cleaned.startsWith("+")) {
-    cleaned = `+91${cleaned}`;
+  // Strip "91" if it's attached as a country code
+  if (cleaned.length > 10 && cleaned.startsWith('91')) {
+    cleaned = cleaned.substring(cleaned.length - 10);
   }
   
   return cleaned;

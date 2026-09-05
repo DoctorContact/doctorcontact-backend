@@ -42,6 +42,7 @@ import analyticsRoutes from "./modules/analytics/analytics.routes.js";
 import locationRoutes from './modules/location/location.routes.js';
 
 import specializationRoutes from "./modules/specialization/specialization.routes.js";
+import auditRoutes from "./modules/audit/audit.routes.js";
 
 const app = express();
 
@@ -96,6 +97,7 @@ app.use("/api/v1/diagnostic-centers", diagnosticCenterRoutes);
 app.use("/api/v1/test-referrals", testReferralRoutes);
 
 app.use("/api/v1/analytics", analyticsRoutes);
+app.use("/api/v1/audit", auditRoutes);
 
 app.use('/api/v1/specializations', specializationRoutes);
 

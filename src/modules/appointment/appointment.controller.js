@@ -45,14 +45,14 @@ export const rescheduleAppointment = asyncHandler(async (req, res) => {
 });
 
 export const createWalkInAppointment = asyncHandler(async (req, res) => {
-  const { doctorId, phone, name, age } = req.body;
-  
-  if (!doctorId || !phone || !name || !age) {
-    throw new ApiError(400, "Doctor ID, Phone, Name, and Age are required");
+  const { doctorId, scheduleId, phone, name } = req.body;
+
+  if (!doctorId || !phone || !name) {
+    throw new ApiError(400, "Doctor ID, Phone, and Name are required");
   }
 
   // Pass everything to the service
-  const result = await appointmentService.processWalkInAppointment(req.user, { doctorId, phone, name, age });
+  const result = await appointmentService.processWalkInAppointment(req.user, { doctorId, scheduleId, phone, name });
 
   res.status(201).json(new ApiResponse(true, "Patient added to queue successfully", result));
 });

@@ -17,7 +17,6 @@ export const findQueueWithAppointments = (doctorId, clinicId, date) => {
             select: {
               id: true,
               name: true,
-              age: true,
               phone: true,
               user: { select: { name: true, phone: true } },
             },

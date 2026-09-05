@@ -84,3 +84,15 @@ export const advancedSearchSchema = z.object({
   availableToday: z.enum(["true", "false"]).optional().transform(v => v === "true"),
   liveNow: z.enum(["true", "false"]).optional().transform(v => v === "true"),
 });
+
+// === Step 13: Schedule Exceptions ===
+export const scheduleExceptionSchema = z.object({
+  date: z.string().min(8, "date is required (YYYY-MM-DD)"),
+  isCancelled: z.boolean().optional().default(false),
+  overrideStartTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/).optional(),
+  overrideEndTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/).optional(),
+  overrideMaxPatients: z.number().int().positive().optional(),
+  reason: z.string().optional(),
+}).refine((data) => data.isCancelled || data.overrideStartTime || data.overrideEndTime || data.overrideMaxPatients, {
+  message: "Provide isCancelled or at least one override field",
+});

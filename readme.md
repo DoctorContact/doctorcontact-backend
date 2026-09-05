@@ -336,3 +336,77 @@ Deliberately deferred:
 ## License
 
 Private project — not currently licensed for public/commercial reuse.
+
+
+SCHEDULE EXCEPTIONS (Step 13) + AUDIT LOG (Step 53)
+=====================================================
+
+Stacks on top of backend-update.zip and double-booking-fix.zip from
+before — this includes the full current version of every file it
+touches, not a diff.
+
+MIGRATION NEEDED
+-----------------
+This adds 2 new tables (ScheduleException, AuditLog) — both purely
+additive, nothing existing is touched or renamed. Run:
+
+  npx prisma migrate dev --name schedule_exceptions_and_audit_log
+
+WHAT'S NEW
+----------
+1. Schedule exceptions — override or cancel a recurring schedule for
+   ONE specific date without touching the recurring pattern itself.
+     POST   /doctors/schedules/:scheduleId/exceptions
+            body: { date, isCancelled?, overrideStartTime?,
+                     overrideEndTime?, overrideMaxPatients?, reason? }
+     GET    /doctors/schedules/:scheduleId/exceptions
+     DELETE /doctors/schedules/:scheduleId/exceptions/:exceptionId
+
+   Enforced in TWO places, not just display:
+     - evaluateDoctorStatus (Live/Available cards)
+     - the actual booking transaction's capacity check (so a
+       reduced-capacity override date can't be overbooked)
+
+2. Audit log — a generic trail separate from QueueLog (which only
+   covers queue actions like Next/Skip/Recall).
+     GET /audit  (Super Admin only) — filter by targetType, targetId,
+     actorUserId, limit.
+
+   Wired into: schedule exceptions created/removed, appointment
+   cancellations, clinic marking a holiday/closure, doctor marked on
+   leave. NOT wired into everything the spec's example list mentions
+   (e.g. "doctor schedule changed" on normal create/update, "walk-in
+   created by clinic") — those are easy to add the same way
+   (logAudit() is a 6-line call) but I stopped at a representative
+   set rather than touching every mutation in one pass.
+
+TWO THINGS FOUND MID-WORK THAT NEED YOUR CALL
+------------------------------------------------
+1. There was ALREADY a partial answer to "skip a schedule on one
+   date" living in recurrencePattern as excludedDates/exactDate
+   (used in GET .../schedules?date=X, but never in Live/Available or
+   actual booking before now). I made evaluateDoctorStatus respect
+   BOTH that AND the new ScheduleException table, so nothing regresses
+   — but you now have two ways to do the same half of this feature.
+   My suggestion: standardize on ScheduleException going forward
+   (it also supports overrides, not just skipping) and treat
+   excludedDates as legacy/read-only. Your call though.
+
+2. doctor.controller.js's getSchedules already checks for a
+   recurrenceType called "SPECIFIC_DATE" — but that value doesn't
+   exist in the Prisma RecurrenceType enum (only DAILY / WEEKLY /
+   MONTHLY_DATE / MONTHLY_WEEKDAY). That code path can never actually
+   match anything right now. Either add SPECIFIC_DATE to the enum, or
+   it's dead code worth removing — didn't want to guess which without
+   asking.
+
+A BUG I CAUGHT BEFORE SHIPPING IT
+------------------------------------
+My first pass at MONTHLY_WEEKDAY matching used a shape I invented
+({ordinal, weekday}). Before finalizing I found doctor.controller.js
+already has a working implementation using a DIFFERENT shape
+({ day, week, isLast }). Rewrote evaluateDoctorStatus to match the
+real, existing shape instead — worth double-checking on your end
+that a "2nd Sunday" / "last Friday" schedule now shows correctly
+Live/Available, since this is the first time that logic has run
+outside the schedule-listing endpoint it was written for.

@@ -13,7 +13,8 @@ import {
   markLeaveSchema,
   delayNotificationSchema,
   createScheduleSchema,
-  updateScheduleSchema
+  updateScheduleSchema,
+  scheduleExceptionSchema
 } from "./doctor.validation.js";
 
 // ==========================================
@@ -250,6 +251,23 @@ export const updateSchedule = asyncHandler(async (req, res) => {
 export const deleteSchedule = asyncHandler(async (req, res) => {
   await doctorService.removeSchedule(req.user, req.params.doctorId, req.params.clinicId, req.params.scheduleId);
   res.status(200).json(new ApiResponse(true, "Schedule deleted successfully"));
+});
+
+// === Step 13: Schedule Exceptions ===
+export const setScheduleException = asyncHandler(async (req, res) => {
+  const data = scheduleExceptionSchema.parse(req.body);
+  const exception = await doctorService.setScheduleException(req.user, req.params.scheduleId, data);
+  res.status(200).json(new ApiResponse(true, "Schedule exception saved", { exception }));
+});
+
+export const getScheduleExceptions = asyncHandler(async (req, res) => {
+  const exceptions = await doctorService.getScheduleExceptions(req.user, req.params.scheduleId);
+  res.status(200).json(new ApiResponse(true, "Schedule exceptions fetched", { exceptions }));
+});
+
+export const deleteScheduleException = asyncHandler(async (req, res) => {
+  await doctorService.removeScheduleException(req.user, req.params.scheduleId, req.params.exceptionId);
+  res.status(200).json(new ApiResponse(true, "Schedule exception removed"));
 });
 
 export const getSchedules = asyncHandler(async (req, res) => {

@@ -161,6 +161,22 @@ export const findDoctorScheduleById = (id) => prisma.doctorSchedule.findUnique({
   where: { id }
 });
 
+// === Schedule Exceptions (Step 13) ===
+export const upsertScheduleException = (scheduleId, date, data) =>
+  prisma.scheduleException.upsert({
+    where: { scheduleId_date: { scheduleId, date: new Date(date) } },
+    create: { scheduleId, date: new Date(date), ...data },
+    update: data,
+  });
+
+export const listScheduleExceptions = (scheduleId) =>
+  prisma.scheduleException.findMany({
+    where: { scheduleId },
+    orderBy: { date: "asc" },
+  });
+
+export const deleteScheduleException = (id) => prisma.scheduleException.delete({ where: { id } });
+
 const getDoctorIncludeForStatus = (todayDate) => ({
   user: { select: { name: true, email: true, avatar: true } },
   clinic: {
@@ -173,7 +189,10 @@ const getDoctorIncludeForStatus = (todayDate) => ({
       holidays: { where: { date: todayDate } } 
     },
   },
-  schedules: { where: { isActive: true } },
+  schedules: {
+    where: { isActive: true },
+    include: { exceptions: { where: { date: todayDate } } },
+  },
   leaves: { where: { date: todayDate } },
   appointments: {
     where: {

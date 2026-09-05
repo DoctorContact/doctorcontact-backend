@@ -48,7 +48,7 @@ router.post("/register", authLimiter, authController.register);
  * @swagger
  * /auth/login:
  *   post:
- *     summary: Log in with email and password
+ *     summary: Log in with (email OR phone) + password — Doctor/Clinic/Receptionist/Admin/Super Admin (Patients use /auth/patient/phone instead)
  *     tags: [Auth]
  *     security: []
  *     requestBody:
@@ -57,11 +57,14 @@ router.post("/register", authLimiter, authController.register);
  *         application/json:
  *           schema:
  *             type: object
- *             required: [email, password]
+ *             required: [password]
  *             properties:
  *               email:
  *                 type: string
  *                 example: anil@test.com
+ *               phone:
+ *                 type: string
+ *                 example: "+919777777777"
  *               password:
  *                 type: string
  *                 example: "123456"
@@ -69,11 +72,42 @@ router.post("/register", authLimiter, authController.register);
  *       200:
  *         description: Login successful, returns accessToken and sets refreshToken cookie
  *       401:
- *         description: Invalid email or password
+ *         description: Invalid credentials
  *       403:
  *         description: Account deactivated
  */
 router.post("/login", authLimiter, authController.login);
+
+/**
+ * @swagger
+ * /auth/patient/phone:
+ *   post:
+ *     summary: Patient login AND signup in one call — verifies a Firebase Phone Auth ID token (patients have no password)
+ *     tags: [Auth]
+ *     security: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [idToken]
+ *             properties:
+ *               idToken:
+ *                 type: string
+ *                 description: ID token returned by the Firebase client SDK after the user confirms the SMS OTP
+ *               name:
+ *                 type: string
+ *                 description: Required only the first time (brand new phone number)
+ *     responses:
+ *       200:
+ *         description: Returns accessToken/refreshToken and the user (isNewAccount indicates signup vs login)
+ *       400:
+ *         description: Invalid token, or name missing for a first-time signup
+ *       409:
+ *         description: This phone number belongs to a non-Patient account
+ */
+router.post("/patient/phone", authLimiter, authController.patientPhoneAuth);
 
 /**
  * @swagger
@@ -142,6 +176,36 @@ router.post("/forgot-password", otpLimiter, authController.forgotPassword);
  *         description: Invalid or expired OTP
  */
 router.post("/reset-password", otpLimiter, authController.resetPassword);
+
+/**
+ * @swagger
+ * /auth/reset-password/phone:
+ *   post:
+ *     summary: Reset password for Doctor/Clinic/Receptionist/Admin using a Firebase phone OTP (one call, no separate send-OTP step)
+ *     tags: [Auth]
+ *     security: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [idToken, newPassword]
+ *             properties:
+ *               idToken:
+ *                 type: string
+ *                 description: ID token returned by the Firebase client SDK after the user confirms the SMS OTP for their account's phone number
+ *               newPassword:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Password reset successfully
+ *       403:
+ *         description: Account was created by a Clinic/Admin and can't self-reset
+ *       404:
+ *         description: No account found with this phone number
+ */
+router.post("/reset-password/phone", otpLimiter, authController.resetPasswordByPhone);
 
 /**
  * @swagger

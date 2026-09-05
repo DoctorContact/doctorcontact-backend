@@ -45,7 +45,6 @@ export const getDistinctPatientsForClinic = async (clinicId) => {
 
   return appointments.map((appt) => ({
     name: appt.patient?.user?.name || appt.patient?.name,
-    age: appt.patient?.age,
     phone: appt.patient?.user?.phone || appt.patient?.phone,
   }));
 };
@@ -59,7 +58,6 @@ export const getDistinctPatientsForDoctorAtClinic = async (doctorId, clinicId, d
 
   return appointments.map((appt) => ({
     name: appt.patient?.user?.name || appt.patient?.name,
-    age: appt.patient?.age,
     dob: appt.patient?.dob,
     phone: appt.patient?.user?.phone || appt.patient?.phone,
   }));

@@ -8,9 +8,22 @@ export const registerSchema = z.object({
   dob: z.string().datetime().optional(),
 });
 
-export const loginSchema = z.object({
-  email: z.string().email("Invalid email"),
-  password: z.string().min(1, "Password is required"),
+export const loginSchema = z
+  .object({
+    email: z.string().email("Invalid email").optional(),
+    phone: z.string().optional(),
+    password: z.string().min(1, "Password is required"),
+  })
+  .refine((data) => data.email || data.phone, {
+    message: "Email or phone number is required",
+  });
+
+// Patient-only: idToken comes from the frontend's Firebase Phone Auth SDK
+// after the user confirms the SMS OTP. `name` is only required the first
+// time (brand-new phone number, no account yet).
+export const patientPhoneAuthSchema = z.object({
+  idToken: z.string().min(10, "A valid Firebase ID token is required"),
+  name: z.string().min(2, "Name is required").optional(),
 });
 
 export const forgotPasswordSchema = z.object({
@@ -20,6 +33,14 @@ export const forgotPasswordSchema = z.object({
 export const resetPasswordSchema = z.object({
   email: z.string().email("Invalid email"),
   otp: z.string().length(6, "OTP must be 6 digits"),
+  newPassword: z.string().min(6, "Password must be at least 6 characters"),
+});
+
+// Phone-based reset for Doctor/Clinic/Receptionist/Admin/Super Admin.
+// idToken already proves phone ownership (Firebase OTP was confirmed on the
+// frontend), so this is a single call — no separate "send OTP" step needed.
+export const resetPasswordByPhoneSchema = z.object({
+  idToken: z.string().min(10, "A valid Firebase ID token is required"),
   newPassword: z.string().min(6, "Password must be at least 6 characters"),
 });
 

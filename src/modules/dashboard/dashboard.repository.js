@@ -14,7 +14,7 @@ export const getDoctorTodayAppointments = (doctorId, date) => {
   return prisma.appointment.findMany({
     where: { doctorId, date: new Date(date) },
     include: {
-      patient: { select: { name: true, age: true, user: { select: { name: true } } } },
+      patient: { select: { name: true, user: { select: { name: true } } } },
     },
     orderBy: { token: "asc" },
   });

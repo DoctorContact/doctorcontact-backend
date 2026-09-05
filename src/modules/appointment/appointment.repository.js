@@ -110,6 +110,50 @@ export const getDoctorScheduleById = (scheduleId) => {
   return prisma.doctorSchedule.findUnique({ where: { id: scheduleId } });
 };
 
+// Rule: a patient shouldn't end up with two active appointments too close
+// together in time on the same day — whether that's the same doctor twice,
+// or two different doctors whose sessions overlap/nearly-overlap. Returns
+// the conflicting appointment (with its schedule + doctor name) if one
+// exists, so the caller can give a clear error.
+export const findConflictingAppointmentForPatient = async ({
+  patientId,
+  date,
+  scheduleStartTime,
+  excludeDoctorId,
+}) => {
+  const active = await prisma.appointment.findMany({
+    where: {
+      patientId,
+      date: new Date(date),
+      status: { in: ["WAITING", "CHECKED_IN"] },
+    },
+    include: {
+      queue: { include: { schedule: true } },
+      doctor: { include: { user: { select: { name: true } } } },
+    },
+  });
+
+  const [newH, newM] = scheduleStartTime.split(":").map(Number);
+  const newMinutes = newH * 60 + newM;
+  const GAP_MINUTES = 45;
+
+  for (const appt of active) {
+    const sameDoctor = appt.doctorId === excludeDoctorId;
+    const otherStart = appt.queue?.schedule?.startTime;
+    if (!otherStart) continue;
+
+    const [oh, om] = otherStart.split(":").map(Number);
+    const otherMinutes = oh * 60 + om;
+    const gap = Math.abs(newMinutes - otherMinutes);
+
+    if (sameDoctor || gap < GAP_MINUTES) {
+      return { appointment: appt, gap, sameDoctor };
+    }
+  }
+
+  return null;
+};
+
 export const createAppointmentWithToken = async ({ doctorId, clinicId, patientId, queueId, scheduleId, date, bookingSource }) => {
   // Use a Serializable transaction to ensure capacity is strictly enforced (Rule 22)
   return prisma.$transaction(async (tx) => {
@@ -124,9 +168,19 @@ export const createAppointmentWithToken = async ({ doctorId, clinicId, patientId
     // === CAPACITY CHECK (STEP 6) ===
     const schedule = queue.schedule;
     if (!schedule) throw new ApiError(500, "Queue is missing schedule attachment");
-    
+
+    // A one-off exception for THIS date can override the recurring maxPatients
+    // (Step 13) — check it inside the same transaction so it's as safe against
+    // races as the count below.
+    const exception = await tx.scheduleException.findUnique({
+      where: { scheduleId_date: { scheduleId: schedule.id, date: new Date(date) } },
+    });
+    if (exception?.isCancelled) {
+      throw new ApiError(400, "This session has been cancelled for this date");
+    }
+
     // Default capacity is 20 if somehow missing
-    const maxCapacity = schedule.maxPatients || 20;
+    const maxCapacity = exception?.overrideMaxPatients ?? schedule.maxPatients ?? 20;
 
     // Count currently ACTIVE appointments in this queue
     const activeAppointmentsCount = await tx.appointment.count({
@@ -163,12 +217,6 @@ export const createAppointmentWithToken = async ({ doctorId, clinicId, patientId
 
     return { appointment, queue: updatedQueue };
   }, { isolationLevel: 'Serializable' }); // Strict protection against concurrent bookings
-};
-
-export const createWalkInPatient = ({ name, age, phone }) => {
-  return prisma.patient.create({
-    data: { name, age, phone },
-  });
 };
 
 export const findAppointmentsForPatient = (patientId) => {
@@ -254,16 +302,3 @@ export const getDoctorLeaveForDate = (doctorId, clinicId, date) => {
   });
 };
 
-export const findPatientByPhone = async (phone) => {
-  // 1. Check Guest Patients first (stored directly in Patient table)
-  let patient = await prisma.patient.findFirst({ where: { phone } });
-  if (patient) return patient;
-  
-  // 2. Check App-registered Patients (phone is in User table)
-  const user = await prisma.user.findFirst({ 
-    where: { phone, role: "PATIENT" },
-    include: { patient: true }
-  });
-  
-  return user?.patient || null;
-};

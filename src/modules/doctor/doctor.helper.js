@@ -35,17 +35,53 @@ export const evaluateDoctorStatus = (doctor) => {
     return { isAvailable: false, isLive: false, reason: "Doctor on Leave", capacity: null };
   }
 
-  // 3. Filter Today's Active Schedules
-  const todaysSchedules = (doctor.schedules || []).filter((sch) => {
-    if (!sch.isActive) return false;
-    if (sch.recurrenceType === "DAILY") return true;
-    if (sch.recurrenceType === "WEEKLY" && sch.recurrencePattern?.days?.includes(currentDay)) return true;
-    if (sch.recurrenceType === "MONTHLY_DATE") {
-      const todayDayNum = parseInt(todayDateString.split("-")[2], 10);
-      return sch.recurrencePattern?.date === todayDayNum;
-    }
-    return false; // Safely ignore complex untracked patterns
-  });
+  // 3. Filter Today's Active Schedules (applying any one-off exception first)
+  const todaysSchedules = (doctor.schedules || [])
+    .filter((sch) => sch.isActive)
+    .map((sch) => {
+      const exception = sch.exceptions?.[0]; // pre-filtered to today's date by the query
+      if (!exception) return sch;
+      if (exception.isCancelled) return null; // cancelled just for today
+      return {
+        ...sch,
+        startTime: exception.overrideStartTime || sch.startTime,
+        endTime: exception.overrideEndTime || sch.endTime,
+        maxPatients: exception.overrideMaxPatients ?? sch.maxPatients,
+      };
+    })
+    .filter((sch) => {
+      if (!sch) return false;
+      const pattern = sch.recurrencePattern || {};
+
+      // "excludedDates" / one-off "SPECIFIC_DATE" schedules are already a
+      // real, existing mechanism (used by GET .../schedules?date=) — honor
+      // them here too so Live/Available and the exceptions system agree.
+      if (pattern.excludedDates?.some((d) => String(d).slice(0, 10) === todayDateString)) {
+        return false;
+      }
+      if (sch.recurrenceType === "SPECIFIC_DATE") {
+        return String(pattern.exactDate || "").slice(0, 10) === todayDateString;
+      }
+
+      if (sch.recurrenceType === "DAILY") return true;
+      if (sch.recurrenceType === "WEEKLY") return pattern.days?.includes(currentDay);
+      if (sch.recurrenceType === "MONTHLY_DATE") {
+        const todayDayNum = parseInt(todayDateString.split("-")[2], 10);
+        return pattern.date === todayDayNum;
+      }
+      if (sch.recurrenceType === "MONTHLY_WEEKDAY") {
+        // Same shape as doctor.controller.js's getOrdinalData: { day, week, isLast }
+        const [y, m, d] = todayDateString.split("-").map(Number);
+        const dayOfMonth = d;
+        const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+        const weekNth = Math.ceil(dayOfMonth / 7);
+        const isLast = dayOfMonth + 7 > daysInMonth;
+        if (pattern.day !== currentDay) return false;
+        if (pattern.isLast) return isLast;
+        return pattern.week === weekNth;
+      }
+      return false; // Safely ignore anything else untracked
+    });
 
   if (todaysSchedules.length === 0) {
     return { isAvailable: false, isLive: false, reason: "No schedule for today", capacity: null };

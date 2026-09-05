@@ -7,6 +7,7 @@ import { uploadBufferToCloudinary, deleteFromCloudinary } from "../../utils/clou
 import { respondToDoctorRequest as respondToDoctorRequestCore } from "../doctor/doctor.service.js";
 import { findApprovedAssociationsForDoctor } from "../doctor/doctor.repository.js";
 import { evaluateClinicAvailability } from "./clinic.helper.js";
+import { logAudit } from "../audit/audit.service.js";
 
 // === NEW: Lookup existing doctor by email ===
 export const lookupDoctorByEmail = async (email) => {
@@ -245,7 +246,18 @@ export const addClinicHoliday = async (clinicUserId, { date, reason }) => {
   if (!clinic) throw new ApiError(404, "Clinic profile not found");
   const existing = await clinicRepo.findHolidayForDate(clinic.id, date);
   if (existing) throw new ApiError(409, "A holiday is already set for this date");
-  return clinicRepo.addHoliday(clinic.id, date, reason);
+  const holiday = await clinicRepo.addHoliday(clinic.id, date, reason);
+
+  await logAudit({
+    actorUserId: clinicUserId,
+    actorRole: "CLINIC",
+    action: "CLINIC_MARKED_CLOSED",
+    targetType: "Clinic",
+    targetId: clinic.id,
+    meta: { date, reason },
+  });
+
+  return holiday;
 };
 
 export const removeClinicHoliday = async (clinicUserId, holidayId) => {
