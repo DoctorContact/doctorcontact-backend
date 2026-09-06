@@ -575,3 +575,138 @@ users with no phone on file — since Patient.phone is unique+required
 now, a SECOND phone-less user hitting this path would have crashed on
 a duplicate-key error. Now throws a clear "update your profile first"
 error instead of silently colliding later.
+
+
+DOCTOR CONTACT BACKEND — FULL CONSOLIDATED UPDATE
+====================================================
+Everything from this entire session, merged into ONE package (42
+files). This replaces needing to apply the 6 earlier zips one by
+one — every file here is already the final, combined version.
+
+HOW TO APPLY
+------------
+1. Copy every file in this zip into the matching path in your
+   `developer` branch (overwrite existing files, add new ones).
+2. npm install          (adds firebase-admin, node-cron)
+3. npx prisma migrate dev --name full_platform_update
+4. Add to .env (see .env.example for the exact keys):
+     FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY
+   From Firebase Console -> Project Settings -> Service Accounts ->
+   Generate new private key. Also turn on Phone Authentication under
+   Authentication -> Sign-in method.
+5. Start the server and smoke-test at least: login, patient phone
+   login, book an appointment, cancel it, call next in queue.
+   NONE of this has been run against a live database yet — only
+   syntax-checked and manually reviewed. Test in staging first.
+
+WHAT'S IN HERE (everything built this session)
+--------------------------------------------------
+
+AUTH
+  - POST /auth/patient/phone           patient login+signup (Firebase OTP)
+  - POST /auth/login                   now takes email OR phone + password
+  - POST /auth/reset-password/phone    phone-based reset (Doctor/Clinic/Receptionist/Admin)
+  - /auth/register (old email+password patient signup) — retired
+
+PATIENT
+  - Guest patient add (Name+Mobile) now always creates a real account
+    behind it (no password) — later phone+OTP login lands in that
+    SAME account, full history intact, no separate "link" step.
+  - Phone normalization (spaces/+91/dashes) so the same number never
+    creates two records.
+  - Re-adding an existing phone with a different name/gender now
+    UPDATES the existing record instead of ignoring the change.
+
+APPOINTMENTS / BOOKING
+  - Capacity + concurrency-safe booking (Serializable transaction),
+    with a clean 409 instead of a raw 500 on a race.
+  - A patient can't double-book the same doctor, or book two
+    different doctors within 45 minutes of each other.
+  - Walk-in booking now shares the same patient-lookup/creation code
+    as reception (used to be a separate, non-normalizing duplicate).
+  - Per-schedule online-booking toggle — a clinic can turn OFF online
+    booking for one specific doctor/session while walk-in/reception
+    still works.
+  - Fixed a dummy-phone placeholder that would have crashed the
+    second time a phone-less user tried to book online.
+
+DOCTOR SCHEDULE
+  - DoctorSchedule: multi-session/day, per-session maxPatients,
+    recurrenceType (DAILY/WEEKLY/MONTHLY_DATE/MONTHLY_WEEKDAY/
+    SPECIFIC_DATE).
+  - Schedule Exceptions: cancel or override (time/capacity) a
+    schedule for ONE date without touching the recurring pattern.
+    POST/GET/DELETE /doctors/schedules/:scheduleId/exceptions
+  - The old recurrencePattern.excludedDates approach is retired —
+    consolidated into Schedule Exceptions (frontend can keep sending
+    excludedDates in the same request shape; the backend converts it
+    automatically).
+
+LIVE / AVAILABLE DOCTORS
+  - evaluateDoctorStatus now factors in schedule exceptions, the
+    real MONTHLY_WEEKDAY shape ({day, week, isLast} — matches what
+    the existing schedule-listing endpoint already used), and
+    persistent doctor status.
+  - Doctor status is now persistent, not a one-shot notification:
+      POST /doctors/:doctorId/clinics/:clinicId/delay   (existing route, now also saves state)
+      POST /doctors/:doctorId/clinics/:clinicId/resume  (new — clears it)
+    Every doctor search/list result now includes operationalStatus
+    ("NORMAL"/"RUNNING_LATE"/"PAUSED") and delayMinutes.
+
+DOCTOR ↔ CLINIC
+  - Adding an existing doctor by email OR phone now creates a
+    PENDING connection request (doctor gets notified and must
+    accept) instead of silently auto-approving.
+  - Email/phone flexibility (need only one, not both) rolled out
+    consistently: Admin creates Admin, Admin creates Clinic, Clinic
+    creates Doctor, Clinic creates Receptionist.
+
+FOLLOW-UPS (brand new module)
+  - POST /followups { patientId, doctorId, clinicId, appointmentId?, followUpDate, notes? }
+  - GET  /followups/me                     (patient's own)
+  - GET  /followups/clinic/:clinicId       ?doctorId=&status=&upcomingOnly=true
+  - PATCH /followups/:followupId/cancel | /complete
+  - Patient notified immediately when scheduled, then again on the
+    follow-up date itself via a daily 8 AM cron job (node-cron) —
+    each reminder only ever sends once even across server restarts.
+
+SEARCH
+  - GET /doctors/search — query/specializationId/city/maxFee/
+    availableToday/liveNow (already existed, confirmed working)
+  - GET /clinics — now also takes query/city/specializationId
+
+AUDIT LOG (new)
+  - GET /audit  (Super Admin) — targetType/targetId/actorUserId/limit
+  - Logged so far: schedule exceptions, appointment cancellations,
+    clinic holidays, doctor leave, doctor-clinic connection requests.
+    NOT logged on every single mutation in the app — a representative
+    set, easy to extend the same way (logAudit() is a 6-line call).
+
+KNOWN GAPS / NOT DONE (be upfront about these)
+--------------------------------------------------
+  - Booking cutoff window — explicitly descoped, not built.
+  - rescheduleAppointment doesn't pass a scheduleId to the rebooking
+    step — pre-existing bug, needs a product decision (same session
+    as before, or let the patient pick a new one) before fixing.
+  - Queue status set is WAITING/CHECKED_IN/ABSENT/COMPLETED/CANCELLED
+    — no separate NO_SHOW vs SKIPPED like the original spec listed.
+  - Clinic search's query/city/specialization filter doesn't compute
+    open-now/availability like the plain GET /clinics does.
+  - If someone provides BOTH email and phone when an account's being
+    created, only email gets pre-checked for uniqueness before
+    insert (phone collision would surface as a raw DB error instead
+    of a clean 409) — low probability, not airtight.
+  - Nothing in this entire session has been run against a live
+    Postgres/Redis instance — everything is syntax-checked
+    (node --check) and manually reviewed, not integration-tested.
+
+OUT OF SCOPE THIS ENTIRE SESSION (frontend / deployment)
+------------------------------------------------------------
+  - Header "Live Doctors" button (still shows the disabled dark-mode
+    toggle)
+  - Wiring any of the above endpoints into actual UI
+  - Frontend Socket.io subscriptions for queue live-updates (backend
+    emits correctly; the queue screens don't listen yet)
+  - Firebase Phone Auth client-side integration (reCAPTCHA, OTP
+    input, confirmationResult.confirm()) — this package only covers
+    the backend token-verification half
