@@ -410,3 +410,168 @@ real, existing shape instead — worth double-checking on your end
 that a "2nd Sunday" / "last Friday" schedule now shows correctly
 Live/Available, since this is the first time that logic has run
 outside the schedule-listing endpoint it was written for.
+
+
+
+CONSOLIDATION UPDATE — one mechanism per feature + email/phone flexibility
+============================================================================
+
+Stacks on top of everything before (auth/patient, double-booking,
+schedule-exceptions/audit-log). No new migration needed — no schema
+change this round (SPECIFIC_DATE was already a valid enum value,
+turns out my earlier note that it wasn't was wrong — double-checked
+this time before touching the schema).
+
+1. excludedDates RETIRED — ScheduleException is now the ONLY place
+   "skip/override a schedule for one date" lives.
+     - GET .../schedules?date=X now checks ScheduleException instead
+       of recurrencePattern.excludedDates.
+     - POST/PATCH a schedule with recurrencePattern.excludedDates in
+       the body still works from the frontend's point of view — the
+       dates just get converted into ScheduleException rows
+       (isCancelled: true) under the hood instead of being stored in
+       the JSON blob.
+     - evaluateDoctorStatus (Live/Available) no longer reads
+       excludedDates at all — only ScheduleException.
+     - SPECIFIC_DATE (a schedule that only runs once, non-recurring)
+       is a genuinely different concept and was KEPT, not merged —
+       it's "this schedule only exists on one date" vs
+       ScheduleException's "this normally-recurring schedule doesn't
+       run / runs differently on one date."
+
+2. Email-or-phone flexibility, consistently, everywhere an account
+   gets created:
+     - Admin creates Admin (createAdminSchema)
+     - Admin creates Clinic (createClinicSchema) — was requiring BOTH
+       before, now either one
+     - Clinic creates Doctor (createDoctorSchema)
+     - Clinic creates Receptionist (createReceptionistSchema)
+   Each now validates "at least one of email/phone", and the service
+   layer checks uniqueness against whichever was actually provided
+   (previously some of these would have crashed calling
+   findUserByEmail(undefined) once email became optional — fixed).
+
+3. Doctor-clinic "add by email" no longer auto-approves.
+   Clinic adds an existing doctor by email/phone -> a
+   DoctorClinicAssociation is created as PENDING (was APPROVED before,
+   silently, with no consent) -> the doctor gets a notification and
+   accepts/rejects through the same respondToDoctorRequest flow used
+   everywhere else in the app. One consistent rule for "does this
+   doctor-clinic link need consent" instead of two.
+   Also: the lookup itself now checks by phone too, not just email,
+   matching #2 above.
+
+4. /auth/register (old email+password patient signup) is retired —
+   removed from auth.routes.js. The controller/service functions are
+   still in the codebase, just not routed, in case you want to reuse
+   the underlying logic for something else later. Patients only ever
+   go through POST /auth/patient/phone now.
+
+ONE KNOWN GAP, LOW RISK
+-------------------------
+If someone provides BOTH email and phone when creating a
+Doctor/Receptionist/Clinic/Admin, only email gets pre-checked for
+uniqueness before insert (phone collision would surface as a raw DB
+constraint error instead of a clean 409, if it ever actually
+happens). Flagging rather than silently leaving it — low probability
+since normally only one identifier is given, but not literally
+airtight.
+
+
+RETURNING PATIENT — UPDATE EXISTING RECORD INSTEAD OF IGNORING CHANGES
+=========================================================================
+
+Replaces: src/modules/patient/patient.repository.js (full file, no
+migration needed).
+
+WHAT CHANGED
+------------
+Before: if receptionist typed a phone number that already had a
+Patient record, the existing record was returned as-is — any new
+name/gender typed in that moment was silently dropped.
+
+Now: if the phone matches an existing Patient AND the name or gender
+typed this time is different from what's on file, that existing
+record (and the linked User's name, so the two don't drift apart)
+gets updated in place. Still the same Patient — no duplicate, same
+appointment history — just corrected details.
+
+If nothing actually changed, it behaves exactly as before (just
+returns the existing record, no extra writes).
+
+
+FOLLOW-UPS + PERSISTENT DOCTOR STATUS + PER-DOCTOR ONLINE TOGGLE + CLINIC SEARCH
+====================================================================================
+
+MIGRATION NEEDED (3 new tables, 1 new column — all additive)
+----------------------------------------------------------------
+  npx prisma migrate dev --name followups_doctor_status_online_toggle
+
+New tables: Followup, DoctorDailyStatus
+New column: DoctorSchedule.onlineBookingEnabled (default true — nothing
+existing changes behavior until a clinic explicitly turns it off)
+
+New dependency: node-cron — run npm install after copying package.json.
+
+1. FOLLOW-UP MODULE (brand new)
+---------------------------------
+Doctor, Clinic, Receptionist (if assigned to that doctor at that clinic),
+or Admin/Super Admin can schedule a follow-up for a patient.
+
+  POST   /followups                        { patientId, doctorId, clinicId,
+                                              appointmentId?, followUpDate,
+                                              notes? }
+  GET    /followups/me                     (patient's own — role: PATIENT)
+  GET    /followups/clinic/:clinicId       ?doctorId=&status=&upcomingOnly=true
+                                            — "who have we given a follow-up to"
+  PATCH  /followups/:followupId/cancel
+  PATCH  /followups/:followupId/complete
+
+Patient gets a notification immediately when scheduled, AND a reminder
+notification on the follow-up date itself — a daily cron job (8:00 AM
+server time, node-cron) checks for today's SCHEDULED follow-ups and
+notifies each patient once (a `reminderSentAt` timestamp stops it from
+ever double-notifying if the server restarts).
+
+2. PERSISTENT DOCTOR STATUS (Step 40)
+----------------------------------------
+Previously "Running Late" was only ever a one-shot notification — nothing
+remembered that state. Now:
+  - POST /doctors/:doctorId/clinics/:clinicId/delay   (existing, unchanged
+    body) now ALSO saves the status, not just notifies.
+  - POST /doctors/:doctorId/clinics/:clinicId/resume  (new) clears it back
+    to normal.
+  - Every Live Doctor card (evaluateDoctorStatus) now includes
+    operationalStatus ("NORMAL" | "RUNNING_LATE" | "PAUSED") and
+    delayMinutes, and the "Live Now" reason text mentions the delay when
+    running late.
+
+3. PER-DOCTOR ONLINE-BOOKING TOGGLE
+--------------------------------------
+DoctorSchedule now has onlineBookingEnabled (default true). Set to false
+via the existing schedule create/update endpoints and online bookings for
+that specific session are blocked with a clear message — walk-in and
+reception bookings are completely unaffected. This is separate from (and
+layered on top of) the existing clinic-wide onlineConsultationEnabled
+toggle.
+
+4. CLINIC SEARCH FILTERS (Step 55)
+--------------------------------------
+GET /clinics now accepts query/city/specializationId, same names as the
+doctor search. Existing calls with no params (or just ?available=true)
+behave exactly as before — filters only kick in when you actually pass
+one. Scope note: the filtered/search branch does NOT compute
+availability (open-now/working-hours) like the default listing does —
+that's still only on the plain GET /clinics call. Didn't want to
+silently bolt on a heavier computed field without you weighing in on
+whether "available doctors" search should really live on the CLINIC
+search or is better left to the (already much more capable) doctor
+search.
+
+ALSO FIXED WHILE IN THERE
+----------------------------
+bookOnlineAppointment had a dummy-phone fallback ("0000000000") for
+users with no phone on file — since Patient.phone is unique+required
+now, a SECOND phone-less user hitting this path would have crashed on
+a duplicate-key error. Now throws a clear "update your profile first"
+error instead of silently colliding later.

@@ -135,6 +135,45 @@ export const updateDoctor = (id, data) => {
   });
 };
 export const searchClinicsByName = (name) => prisma.clinic.findMany({ where: { isApproved: true, clinicName: { contains: name, mode: "insensitive" } }, select: { id: true, clinicName: true, city: true, address: true, logo: true } });
+
+// Step 55: Advanced clinic search — name, city, and "has a doctor with this
+// specialization" (mirrors doctor search's specializationId filter so the
+// two search experiences stay consistent).
+export const searchClinicsAdvancedDB = async ({ query, city, specializationId }) => {
+  const whereClause = { isApproved: true };
+
+  if (query) {
+    whereClause.clinicName = { contains: query, mode: "insensitive" };
+  }
+  if (city) {
+    whereClause.city = { equals: city, mode: "insensitive" };
+  }
+  if (specializationId) {
+    whereClause.doctors = {
+      some: { specializations: { some: { specializationId } } },
+    };
+  }
+
+  return prisma.clinic.findMany({
+    where: whereClause,
+    select: {
+      id: true,
+      clinicName: true,
+      city: true,
+      address: true,
+      logo: true,
+      phone: true,
+      whatsapp: true,
+      googleMapsUrl: true,
+      latitude: true,
+      longitude: true,
+      isFeatured: true,
+      _count: { select: { doctors: true } },
+    },
+    orderBy: [{ isFeatured: "desc" }, { featuredOrder: "asc" }],
+  });
+};
+
 export const updateClinicLogo = (clinicId, logo) => prisma.clinic.update({ where: { id: clinicId }, data: { logo } });
 
 export const upsertWorkingHours = (clinicId, workingHours) => prisma.$transaction(workingHours.map((wh) => prisma.clinicWorkingHours.upsert({ where: { clinicId_dayOfWeek: { clinicId, dayOfWeek: wh.dayOfWeek } }, update: { openTime: wh.openTime, closeTime: wh.closeTime, isClosed: wh.isClosed }, create: { clinicId, ...wh } })));

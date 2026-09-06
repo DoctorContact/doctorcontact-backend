@@ -159,8 +159,13 @@ export const getMyReceivedRequests = asyncHandler(async (req, res) => {
 // PUBLIC CONTROLLERS
 // ==========================================
 export const getAllClinics = asyncHandler(async (req, res) => {
-  const { available } = req.query; 
-  
+  const { available, query, city, specializationId } = req.query;
+
+  if (query || city || specializationId) {
+    const clinics = await clinicService.searchClinicsAdvanced({ query, city, specializationId });
+    return res.status(200).json(new ApiResponse(true, "Clinics fetched", { clinics }));
+  }
+
   let clinics = await clinicService.fetchAllClinics();
 
   if (available === 'true') {

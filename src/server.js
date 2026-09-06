@@ -5,6 +5,7 @@ import logger from "./config/logger.config.js";
 import prisma from "./config/db.config.js";
 import redis from "./config/redis.config.js";
 import { initSocket } from "./config/socket.config.js";
+import { startFollowupReminderJob } from "./jobs/followupReminder.job.js";
 
 const startServer = async () => {
   try {
@@ -15,6 +16,9 @@ const startServer = async () => {
 
     initSocket(httpServer, env.CLIENT_URL);
     logger.info("✅ Socket.io initialized");
+
+    startFollowupReminderJob();
+    logger.info("✅ Follow-up reminder job scheduled (daily 8:00 AM)");
 
     httpServer.listen(env.PORT, () => {
       logger.info(`🚀 Server running on port ${env.PORT} [${env.NODE_ENV}]`);

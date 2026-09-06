@@ -76,6 +76,8 @@ model Clinic {
   targetedTestRecommendations TestRecommendation[]      @relation("TargetClinic")
   testReferrals             TestReferral[]
   schedules                 DoctorSchedule[]
+  followups                 Followup[]
+  doctorDailyStatuses       DoctorDailyStatus[]
 
   @@index([isFeatured, featuredOrder]) // Data fast fetch korar jonno index
   @@map("clinics")
@@ -112,6 +114,8 @@ model Doctor {
   reviews                Review[]
   specializations        DoctorSpecialization[]
   schedules              DoctorSchedule[]
+  followups              Followup[]
+  dailyStatuses          DoctorDailyStatus[]
 
   @@index([isFeatured, featuredOrder])
   @@map("doctors")
@@ -158,6 +162,7 @@ model Patient {
   reviews              Review[]
   testRecommendations  TestRecommendation[]
   testReferrals        TestReferral[]
+  followups            Followup[]
   
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -223,6 +228,7 @@ model Appointment {
   review              Review?
   testRecommendations TestRecommendation[]
   testReferrals       TestReferral[]
+  followups           Followup[]
 
   @@unique([queueId, token])
   @@map("appointments")
@@ -568,21 +574,22 @@ model DoctorSpecialization {
 }
 
 model DoctorSchedule {
-  id                String              @id @default(uuid())
-  doctorId          String
-  clinicId          String
-  startTime         String
-  endTime           String
-  maxPatients       Int
-  recurrenceType    RecurrenceType // DAILY, WEEKLY, MONTHLY_DATE, MONTHLY_WEEKDAY
-  recurrencePattern Json
-  isActive          Boolean             @default(true)
-  createdAt         DateTime            @default(now())
-  updatedAt         DateTime            @updatedAt
-  clinic            Clinic              @relation(fields: [clinicId], references: [id], onDelete: Cascade)
-  doctor            Doctor              @relation(fields: [doctorId], references: [id], onDelete: Cascade)
-  queues            Queue[]
-  exceptions        ScheduleException[]
+  id                    String              @id @default(uuid())
+  doctorId              String
+  clinicId              String
+  startTime             String
+  endTime               String
+  maxPatients           Int
+  recurrenceType        RecurrenceType // DAILY, WEEKLY, MONTHLY_DATE, MONTHLY_WEEKDAY, SPECIFIC_DATE
+  recurrencePattern     Json
+  isActive              Boolean             @default(true)
+  onlineBookingEnabled  Boolean             @default(true) // Clinic can turn off ONLINE booking for just this doctor/session — walk-in/reception still work
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+  clinic                Clinic              @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  doctor                Doctor              @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  queues                Queue[]
+  exceptions            ScheduleException[]
 
   @@index([doctorId, clinicId])
   @@map("doctor_schedules")
@@ -662,4 +669,62 @@ model OtpSession {
   createdAt DateTime @default(now())
   
   @@map("otp_sessions")
+}
+
+// Follow-up: a doctor/clinic/receptionist schedules a future check-in date
+// for a patient. On that date the patient gets a notification, and the
+// clinic can see everyone they've scheduled a follow-up for.
+model Followup {
+  id              String         @id @default(uuid())
+  patientId       String
+  doctorId        String
+  clinicId        String
+  appointmentId   String? // the visit this follow-up was scheduled from, if any
+  followUpDate    DateTime       @db.Date
+  notes           String?
+  status          FollowupStatus @default(SCHEDULED)
+  reminderSentAt  DateTime?
+  createdByUserId String
+  createdByRole   Role
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  patient         Patient        @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctor          Doctor         @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  clinic          Clinic         @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  appointment     Appointment?   @relation(fields: [appointmentId], references: [id])
+
+  @@index([doctorId, clinicId, followUpDate])
+  @@index([patientId])
+  @@map("followups")
+}
+
+enum FollowupStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+// Persistent per-day operational status for a doctor at a clinic (Step 40) —
+// separate from the one-shot delay notification, so Live Doctor cards can
+// show "Running Late" as actual state, not just something that was announced
+// once and then forgotten.
+model DoctorDailyStatus {
+  id           String                  @id @default(uuid())
+  doctorId     String
+  clinicId     String
+  date         DateTime                @db.Date
+  status       DoctorOperationalStatus @default(NORMAL)
+  delayMinutes Int?
+  updatedAt    DateTime                @updatedAt
+  doctor       Doctor                  @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  clinic       Clinic                  @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+
+  @@unique([doctorId, clinicId, date])
+  @@map("doctor_daily_status")
+}
+
+enum DoctorOperationalStatus {
+  NORMAL
+  RUNNING_LATE
+  PAUSED
 }

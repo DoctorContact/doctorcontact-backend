@@ -128,6 +128,13 @@ router.post(
   doctorController.notifyDelay
 );
 
+router.post(
+  "/:doctorId/clinics/:clinicId/resume",
+  authMiddleware,
+  roleMiddleware("DOCTOR", "CLINIC", "RECEPTIONIST", "SUPER_ADMIN", "ADMIN"),
+  doctorController.resumeConsultation
+);
+
 // =========================================================================
 // 4. SCHEDULE ROUTES
 // =========================================================================

@@ -53,12 +53,6 @@ export const evaluateDoctorStatus = (doctor) => {
       if (!sch) return false;
       const pattern = sch.recurrencePattern || {};
 
-      // "excludedDates" / one-off "SPECIFIC_DATE" schedules are already a
-      // real, existing mechanism (used by GET .../schedules?date=) — honor
-      // them here too so Live/Available and the exceptions system agree.
-      if (pattern.excludedDates?.some((d) => String(d).slice(0, 10) === todayDateString)) {
-        return false;
-      }
       if (sch.recurrenceType === "SPECIFIC_DATE") {
         return String(pattern.exactDate || "").slice(0, 10) === todayDateString;
       }
@@ -124,5 +118,14 @@ export const evaluateDoctorStatus = (doctor) => {
     reason = "Fully Booked / Session Ended";
   }
 
-  return { isAvailable, isLive, reason, capacity: currentCapacity };
+  // Persistent operational status (Step 40) — set via notifyDoctorDelay /
+  // resumeConsultation, not just a one-shot notification.
+  const dailyStatus = doctor.dailyStatuses?.[0];
+  const operationalStatus = dailyStatus?.status || "NORMAL";
+  const delayMinutes = dailyStatus?.delayMinutes ?? null;
+  if (operationalStatus === "RUNNING_LATE") {
+    reason = isLive ? `Live Now — running ~${delayMinutes} min late` : reason;
+  }
+
+  return { isAvailable, isLive, reason, capacity: currentCapacity, operationalStatus, delayMinutes };
 };

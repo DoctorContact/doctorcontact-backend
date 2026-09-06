@@ -2,8 +2,9 @@ import prisma from "../../config/db.config.js";
 import * as clinicRepo from "./clinic.repository.js";
 import ApiError from "../../utils/apiError.js";
 import { hashPassword } from "../auth/auth.helper.js";
-import { findUserByEmail, updateUserPassword } from "../auth/auth.repository.js";
+import { findUserByEmail, findUserByPhone, updateUserPassword } from "../auth/auth.repository.js";
 import { uploadBufferToCloudinary, deleteFromCloudinary } from "../../utils/cloudinaryUpload.js";
+import { notifyUser } from "../notification/notification.service.js";
 import { respondToDoctorRequest as respondToDoctorRequestCore } from "../doctor/doctor.service.js";
 import { findApprovedAssociationsForDoctor } from "../doctor/doctor.repository.js";
 import { evaluateClinicAvailability } from "./clinic.helper.js";
@@ -43,12 +44,17 @@ export const addDoctor = async (clinicUserId, payload) => {
   if (!clinic) throw new ApiError(404, "Clinic profile not found");
   if (!clinic.isApproved) throw new ApiError(403, "Your clinic is not yet approved by admin");
 
-  const existingUser = await findUserByEmail(payload.email);
+  // Look up an existing doctor by whichever identifier was given — email OR phone.
+  const existingUser = payload.email
+    ? await findUserByEmail(payload.email)
+    : payload.phone
+    ? await findUserByPhone(payload.phone)
+    : null;
 
   // === STEP 2 LOGIC: Associate existing doctor instead of duplicating ===
   if (existingUser) {
     if (existingUser.role !== "DOCTOR") {
-      throw new ApiError(409, "A user with this email exists but is not registered as a DOCTOR.");
+      throw new ApiError(409, "A user with this email/phone exists but is not registered as a DOCTOR.");
     }
 
     const existingDoctor = await prisma.doctor.findUnique({ where: { userId: existingUser.id } });
@@ -59,9 +65,8 @@ export const addDoctor = async (clinicUserId, payload) => {
       where: { doctorId: existingDoctor.id, clinicId: clinic.id }
     });
 
-    // 🟢 FIXED: If the doctor is already linked (either natively or via association),
-    // we return success immediately without throwing an error.
-    // This allows the frontend to proceed cleanly to creating the Schedule/Session.
+    // If the doctor is already linked (either natively or via an APPROVED
+    // association), return success immediately — nothing new to create.
     if (existingDoctor.clinicId === clinic.id || (existingAssoc && existingAssoc.status === "APPROVED")) {
       const { password: _pw, refreshToken: _rt, ...safeUser } = existingUser;
       return { 
@@ -78,7 +83,11 @@ export const addDoctor = async (clinicUserId, payload) => {
       throw new ApiError(409, `Doctor already has a ${existingAssoc.status} request/association with this clinic.`);
     }
 
-    // Create Doctor ↔ Clinic association
+    // Create Doctor ↔ Clinic association — PENDING, same as every other
+    // request/response pathway in the app (Step 6 shouldn't bypass the
+    // doctor's own consent just because a Clinic Admin already knows their
+    // email/phone). The doctor accepts/rejects via the normal
+    // respondToDoctorRequest flow.
     const association = await prisma.doctorClinicAssociation.create({
       data: {
         doctorId: existingDoctor.id,
@@ -87,13 +96,36 @@ export const addDoctor = async (clinicUserId, payload) => {
         dayOfWeek: payload.dayOfWeek || "MONDAY",
         startTime: payload.startTime || "09:00",
         endTime: payload.endTime || "17:00",
-        status: "APPROVED", // Auto-approved since Clinic Admin is initiating
+        status: "PENDING",
         requestedBy: "CLINIC"
       }
     });
 
+    await notifyUser({
+      userId: existingUser.id,
+      type: "CONNECTION_REQUEST_RECEIVED",
+      title: "New Clinic Connection Request",
+      message: `${clinic.clinicName} wants to add you as a doctor at their clinic. Review and respond to the request.`,
+      meta: { clinicId: clinic.id, associationId: association.id },
+    });
+
+    await logAudit({
+      actorUserId: clinicUserId,
+      actorRole: "CLINIC",
+      action: "DOCTOR_CONNECTION_REQUESTED",
+      targetType: "DoctorClinicAssociation",
+      targetId: association.id,
+      meta: { doctorId: existingDoctor.id, clinicId: clinic.id },
+    });
+
     const { password: _pw, refreshToken: _rt, ...safeUser } = existingUser;
-    return { user: safeUser, doctor: existingDoctor, association, isExisting: true };
+    return {
+      user: safeUser,
+      doctor: existingDoctor,
+      association,
+      isExisting: true,
+      message: "A request has been sent to this doctor. They'll appear in your clinic once they accept it.",
+    };
   }
 
   // === Standard flow for entirely new Doctor ===
@@ -158,8 +190,12 @@ export const addReceptionist = async (clinicUserId, payload) => {
   const clinic = await clinicRepo.findClinicByUserId(clinicUserId);
   if (!clinic) throw new ApiError(404, "Clinic profile not found");
   if (!clinic.isApproved) throw new ApiError(403, "Your clinic is not yet approved by admin");
-  const existing = await findUserByEmail(payload.email);
-  if (existing) throw new ApiError(409, "A user with this email already exists");
+  if (payload.email && (await findUserByEmail(payload.email))) {
+    throw new ApiError(409, "A user with this email already exists");
+  }
+  if (payload.phone && (await findUserByPhone(payload.phone))) {
+    throw new ApiError(409, "A user with this phone number already exists");
+  }
   const hashedPassword = await hashPassword(payload.password);
   const { user, receptionist } = await clinicRepo.createReceptionistWithUser({ userData: { ...payload, password: hashedPassword }, clinicId: clinic.id });
   const { password, refreshToken, ...safeUser } = user;
@@ -295,6 +331,15 @@ export const toggleAvailability = async (clinicUserId, isAvailableToday) => {
 // ==========================================
 // PUBLIC SERVICES
 // ==========================================
+
+export const searchClinicsAdvanced = async (filters) => {
+  const clinics = await clinicRepo.searchClinicsAdvancedDB(filters);
+  return clinics.map((clinic) => ({
+    ...clinic,
+    doctorsCount: clinic._count.doctors,
+    _count: undefined,
+  }));
+};
 
 export const fetchAllClinics = async () => {
   const clinics = await clinicRepo.findAllApprovedClinics();

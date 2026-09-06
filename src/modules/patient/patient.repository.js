@@ -33,7 +33,10 @@ export const findPatientById = (id) => {
 //
 // If a User already owns this phone (they self-registered earlier, or a
 // different clinic already added them), we attach the new Patient-side
-// context to that existing account instead of creating a duplicate.
+// context to that existing account instead of creating a duplicate — and if
+// the name/gender typed in NOW differs from what's on file, the existing
+// record gets updated in place (receptionist correcting a typo, patient's
+// name changed, etc.) rather than silently keeping the old value.
 export const createGuestPatient = async ({ name, phone, gender }) => {
   return prisma.$transaction(async (tx) => {
     // Patient.phone is unique system-wide (a patient's identity isn't
@@ -47,7 +50,24 @@ export const createGuestPatient = async ({ name, phone, gender }) => {
         })
       : null;
 
-    if (existing) return existing;
+    if (existing) {
+      const nameChanged = name && name !== existing.name;
+      const genderChanged = gender && gender !== existing.gender;
+      if (!nameChanged && !genderChanged) return existing;
+
+      if (nameChanged && existing.userId) {
+        await tx.user.update({ where: { id: existing.userId }, data: { name } });
+      }
+
+      return tx.patient.update({
+        where: { id: existing.id },
+        data: {
+          name: nameChanged ? name : undefined,
+          gender: genderChanged ? gender : undefined,
+        },
+        include: { user: { select: { id: true, name: true, email: true, phone: true } } },
+      });
+    }
 
     let user = phone ? await tx.user.findUnique({ where: { phone } }) : null;
 

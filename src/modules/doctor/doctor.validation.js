@@ -56,6 +56,7 @@ export const createScheduleSchema = z.object({
   recurrenceType: z.enum(["DAILY", "WEEKLY", "MONTHLY_DATE", "MONTHLY_WEEKDAY", "SPECIFIC_DATE"]),
   recurrencePattern: z.record(z.any()), 
   isActive: z.boolean().default(true),
+  onlineBookingEnabled: z.boolean().default(true),
 }).refine((data) => data.startTime < data.endTime, {
   message: "endTime must be after startTime",
 });
@@ -68,6 +69,7 @@ export const updateScheduleSchema = z.object({
   recurrenceType: z.enum(["DAILY", "WEEKLY", "MONTHLY_DATE", "MONTHLY_WEEKDAY", "SPECIFIC_DATE"]).optional(),
   recurrencePattern: z.record(z.any()).optional(),
   isActive: z.boolean().optional(),
+  onlineBookingEnabled: z.boolean().optional(),
 }).refine((data) => {
   if (data.startTime && data.endTime) return data.startTime < data.endTime;
   return true;

@@ -6,43 +6,11 @@ import { authLimiter, otpLimiter } from "../../middlewares/rateLimiter.middlewar
 
 const router = Router();
 
-/**
- * @swagger
- * /auth/register:
- *   post:
- *     summary: Register a new Patient account (self-registration is Patient-only; Clinic accounts are created by Admin/Super Admin)
- *     tags: [Auth]
- *     security: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [name, email, password]
- *             properties:
- *               name:
- *                 type: string
- *                 example: Anil Kumar
- *               email:
- *                 type: string
- *                 example: anil@test.com
- *               password:
- *                 type: string
- *                 example: "123456"
- *               phone:
- *                 type: string
- *                 example: "9777777777"
- *               dob:
- *                 type: string
- *                 format: date-time
- *     responses:
- *       201:
- *         description: User registered successfully
- *       409:
- *         description: User with this email already exists
- */
-router.post("/register", authLimiter, authController.register);
+// NOTE: The old email+password self-registration endpoint (/auth/register,
+// which always created a PATIENT) has been retired — patients now sign up
+// and log in exclusively through POST /auth/patient/phone (Firebase OTP).
+// authController.register / authService.registerUser are left in place,
+// unused, in case a different reuse is decided later — just not routed.
 
 /**
  * @swagger

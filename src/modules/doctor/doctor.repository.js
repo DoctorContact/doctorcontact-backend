@@ -161,6 +161,19 @@ export const findDoctorScheduleById = (id) => prisma.doctorSchedule.findUnique({
   where: { id }
 });
 
+// === Doctor Daily Operational Status (Step 40) ===
+export const upsertDoctorDailyStatus = (doctorId, clinicId, date, data) =>
+  prisma.doctorDailyStatus.upsert({
+    where: { doctorId_clinicId_date: { doctorId, clinicId, date: new Date(date) } },
+    create: { doctorId, clinicId, date: new Date(date), ...data },
+    update: data,
+  });
+
+export const getDoctorDailyStatus = (doctorId, clinicId, date) =>
+  prisma.doctorDailyStatus.findUnique({
+    where: { doctorId_clinicId_date: { doctorId, clinicId, date: new Date(date) } },
+  });
+
 // === Schedule Exceptions (Step 13) ===
 export const upsertScheduleException = (scheduleId, date, data) =>
   prisma.scheduleException.upsert({
@@ -176,6 +189,11 @@ export const listScheduleExceptions = (scheduleId) =>
   });
 
 export const deleteScheduleException = (id) => prisma.scheduleException.delete({ where: { id } });
+
+export const listExceptionsForSchedulesOnDate = (scheduleIds, date) =>
+  prisma.scheduleException.findMany({
+    where: { scheduleId: { in: scheduleIds }, date: new Date(date) },
+  });
 
 const getDoctorIncludeForStatus = (todayDate) => ({
   user: { select: { name: true, email: true, avatar: true } },
@@ -194,6 +212,7 @@ const getDoctorIncludeForStatus = (todayDate) => ({
     include: { exceptions: { where: { date: todayDate } } },
   },
   leaves: { where: { date: todayDate } },
+  dailyStatuses: { where: { date: todayDate } },
   appointments: {
     where: {
       date: todayDate,

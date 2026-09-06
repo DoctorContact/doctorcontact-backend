@@ -27,26 +27,28 @@ export const updateSettingsSchema = z.object({
 
 // superadmin create admin
 
-export const createAdminSchema = z.object({
-  name: z.string().min(2, "Name is required"),
-  email: z.string().email("Invalid email"),
-  password: z.string().min(6, "Password must be at least 6 characters"),
-  phone: z.string().optional(),
-});
+export const createAdminSchema = z
+  .object({
+    name: z.string().min(2, "Name is required"),
+    email: z.string().email("Invalid email").optional(),
+    phone: z.string().min(10, "Invalid phone number").optional(),
+    password: z.string().min(6, "Password must be at least 6 characters"),
+  })
+  .refine((data) => data.email || data.phone, { message: "Email or phone number is required" });
 
- export const createClinicSchema = z.object({
-  name: z.string().min(2, "Name is required"),
-  email: z.string().email("Invalid email"),
-  password: z.string().min(6, "Password must be at least 6 characters"),
-  phone: z.string({
-    required_error: "Phone number is required",
-  }).min(10, "Phone number is required"), 
-  clinicName: z.string().min(2, "Clinic name is required"),
-  address: z.string().optional(),
-  city: z.string().optional(),
-  state: z.string().optional(),
-  pincode: z.string().optional(),
-});
+export const createClinicSchema = z
+  .object({
+    name: z.string().min(2, "Name is required"),
+    email: z.string().email("Invalid email").optional(),
+    phone: z.string().min(10, "Invalid phone number").optional(),
+    password: z.string().min(6, "Password must be at least 6 characters"),
+    clinicName: z.string().min(2, "Clinic name is required"),
+    address: z.string().optional(),
+    city: z.string().optional(),
+    state: z.string().optional(),
+    pincode: z.string().optional(),
+  })
+  .refine((data) => data.email || data.phone, { message: "Email or phone number is required" });
 
 export const createDiagnosticCenterSchema = z.object({
   name: z.string().min(2, "Name is required"),

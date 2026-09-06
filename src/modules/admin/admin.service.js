@@ -1,7 +1,7 @@
 import { notifyUser } from "../notification/notification.service.js";
 import ApiError from "../../utils/apiError.js";
 import { hashPassword } from "../auth/auth.helper.js";
-import { findUserByEmail } from "../auth/auth.repository.js";
+import { findUserByEmail, findUserByPhone } from "../auth/auth.repository.js";
 import { updateClinicProfile } from "../clinic/clinic.repository.js";
 
 import {
@@ -134,8 +134,12 @@ export const getStats = async () => {
 // ----------------------------------------------------------------------
 
 export const createAdmin = async ({ name, email, password, phone }) => {
-  const existing = await findUserByEmail(email);
-  if (existing) throw new ApiError(409, "A user with this email already exists");
+  if (email && (await findUserByEmail(email))) {
+    throw new ApiError(409, "A user with this email already exists");
+  }
+  if (phone && (await findUserByPhone(phone))) {
+    throw new ApiError(409, "A user with this phone number already exists");
+  }
 
   const hashedPassword = await hashPassword(password);
   const user = await createAdminUser({ name, email, phone, password: hashedPassword });
@@ -145,8 +149,12 @@ export const createAdmin = async ({ name, email, password, phone }) => {
 };
 
 export const createClinic = async ({ name, email, password, phone, clinicName, address, city, state, pincode }) => {
-  const existing = await findUserByEmail(email);
-  if (existing) throw new ApiError(409, "A user with this email already exists");
+  if (email && (await findUserByEmail(email))) {
+    throw new ApiError(409, "A user with this email already exists");
+  }
+  if (phone && (await findUserByPhone(phone))) {
+    throw new ApiError(409, "A user with this phone number already exists");
+  }
 
   const hashedPassword = await hashPassword(password);
 

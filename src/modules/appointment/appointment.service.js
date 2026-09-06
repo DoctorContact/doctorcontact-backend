@@ -44,14 +44,20 @@ export const searchForDoctors = async (filters) => {
 export const bookOnlineAppointment = async (patientUserId, { doctorId, clinicId, scheduleId, date }) => {
   let patient = await getPatientByUserId(patientUserId);
   
-  // 🟢 FIX: Auto-create a patient profile if Clinic or Admin is testing
+  // Auto-create a patient profile if one doesn't exist yet for this user
+  // (e.g. testing as Clinic/Admin). Patient.phone is unique + required now,
+  // so we can't fall back to a dummy placeholder — that would collide the
+  // second time this ever ran for a different phone-less user.
   if (!patient) {
     const user = await prisma.user.findUnique({ where: { id: patientUserId } });
+    if (!user.phone) {
+      throw new ApiError(400, "Your account has no phone number on file — please update your profile first.");
+    }
     patient = await prisma.patient.create({
       data: {
         userId: patientUserId,
         name: user.name,
-        phone: user.phone || "0000000000"
+        phone: user.phone
       }
     });
   }
@@ -288,6 +294,9 @@ const bookAppointmentCore = async ({ doctorId, clinicId, scheduleId, patientId, 
       throw new ApiError(404, "Invalid schedule selected");
     }
     if (!schedule.isActive) throw new ApiError(400, "This schedule is currently inactive");
+    if (bookingSource === "ONLINE" && schedule.onlineBookingEnabled === false) {
+      throw new ApiError(400, "Online booking is currently turned off for this doctor/session — please book by phone or visit the clinic");
+    }
 
     const queue = await findOrCreateQueue(doctorId, clinicId, date, scheduleId);
     if (queue.status === "CLOSED") {

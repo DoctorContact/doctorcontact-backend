@@ -43,6 +43,7 @@ import {
   upsertScheduleException,
   listScheduleExceptions,
   deleteScheduleException,
+  listExceptionsForSchedulesOnDate,
 } from "./doctor.repository.js";
 import { logAudit } from "../audit/audit.service.js";
 
@@ -404,6 +405,11 @@ export const notifyDoctorDelay = async (user, doctorId, clinicId, delayMinutes) 
 
   const today = new Date().toISOString().split("T")[0];
 
+  await upsertDoctorDailyStatus(doctorId, clinicId, today, {
+    status: "RUNNING_LATE",
+    delayMinutes,
+  });
+
   const appointments = await prisma.appointment.findMany({
     where: {
       doctorId,
@@ -430,7 +436,38 @@ export const notifyDoctorDelay = async (user, doctorId, clinicId, delayMinutes) 
       )
   );
 
+  await logAudit({
+    actorUserId: user.id,
+    actorRole: user.role,
+    action: "DOCTOR_STATUS_RUNNING_LATE",
+    targetType: "Doctor",
+    targetId: doctorId,
+    meta: { clinicId, delayMinutes },
+  });
+
   return { notified: appointments.length };
+};
+
+// Clears a "Running Late"/"Paused" status back to normal — the Live Doctor
+// card should stop showing it immediately, not just after the day rolls over.
+export const resumeConsultation = async (user, doctorId, clinicId) => {
+  await assertDoctorClinicManageAccess(user, doctorId, clinicId);
+
+  const today = new Date().toISOString().split("T")[0];
+  await upsertDoctorDailyStatus(doctorId, clinicId, today, { status: "NORMAL", delayMinutes: null });
+
+  emitDoctorDelay(doctorId, clinicId, { delayMinutes: 0, date: today, resumed: true });
+
+  await logAudit({
+    actorUserId: user.id,
+    actorRole: user.role,
+    action: "DOCTOR_STATUS_RESUMED",
+    targetType: "Doctor",
+    targetId: doctorId,
+    meta: { clinicId },
+  });
+
+  return { status: "NORMAL" };
 };
 
 // ==============================================
@@ -622,6 +659,10 @@ export const removeSchedule = async (user, doctorId, clinicId, scheduleId) => {
 
 export const listSchedules = async (doctorId, clinicId) => {
   return findDoctorSchedules(doctorId, clinicId);
+};
+
+export const getExceptionsForSchedulesOnDate = async (scheduleIds, date) => {
+  return listExceptionsForSchedulesOnDate(scheduleIds, date);
 };
 
 // === Schedule Exceptions (Step 13) ===

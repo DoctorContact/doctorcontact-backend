@@ -145,6 +145,11 @@ export const notifyDelay = asyncHandler(async (req, res) => {
   res.status(200).json(new ApiResponse(true, "Delay notification sent", result));
 });
 
+export const resumeConsultation = asyncHandler(async (req, res) => {
+  const result = await doctorService.resumeConsultation(req.user, req.params.doctorId, req.params.clinicId);
+  res.status(200).json(new ApiResponse(true, "Status cleared back to normal", result));
+});
+
 // ==========================================
 // PUBLIC & ADMIN LISTINGS
 // ==========================================
@@ -215,15 +220,20 @@ export const addSchedule = asyncHandler(async (req, res) => {
     const rawDate = String(req.body.recurrencePattern.exactDate);
     data.recurrencePattern.exactDate = rawDate.includes("T") ? rawDate.split("T")[0] : rawDate;
   }
-  
-  if (req.body.recurrencePattern && req.body.recurrencePattern.excludedDates) {
-    data.recurrencePattern.excludedDates = req.body.recurrencePattern.excludedDates.map(d => {
-      const rawDate = String(d);
-      return rawDate.includes("T") ? rawDate.split("T")[0] : rawDate;
-    });
-  }
+
+  // excludedDates now lives as proper ScheduleException rows, not in this
+  // JSON blob (one mechanism instead of two) — pull it out before saving,
+  // then migrate each date below once the schedule (and its id) exists.
+  const excludedDates = req.body.recurrencePattern?.excludedDates || [];
+  if (data.recurrencePattern) delete data.recurrencePattern.excludedDates;
 
   const schedule = await doctorService.addSchedule(req.user, req.params.doctorId, req.params.clinicId, data);
+
+  for (const raw of excludedDates) {
+    const dateStr = String(raw).includes("T") ? String(raw).split("T")[0] : String(raw);
+    await doctorService.setScheduleException(req.user, schedule.id, { date: dateStr, isCancelled: true });
+  }
+
   res.status(201).json(new ApiResponse(true, "Schedule created successfully", { schedule }));
 });
 
@@ -236,15 +246,17 @@ export const updateSchedule = asyncHandler(async (req, res) => {
     const rawDate = String(req.body.recurrencePattern.exactDate);
     data.recurrencePattern.exactDate = rawDate.includes("T") ? rawDate.split("T")[0] : rawDate;
   }
-  
-  if (req.body.recurrencePattern && req.body.recurrencePattern.excludedDates) {
-    data.recurrencePattern.excludedDates = req.body.recurrencePattern.excludedDates.map(d => {
-      const rawDate = String(d);
-      return rawDate.includes("T") ? rawDate.split("T")[0] : rawDate;
-    });
-  }
+
+  const excludedDates = req.body.recurrencePattern?.excludedDates || [];
+  if (data.recurrencePattern) delete data.recurrencePattern.excludedDates;
 
   const schedule = await doctorService.editSchedule(req.user, req.params.doctorId, req.params.clinicId, req.params.scheduleId, data);
+
+  for (const raw of excludedDates) {
+    const dateStr = String(raw).includes("T") ? String(raw).split("T")[0] : String(raw);
+    await doctorService.setScheduleException(req.user, schedule.id, { date: dateStr, isCancelled: true });
+  }
+
   res.status(200).json(new ApiResponse(true, "Schedule updated successfully", { schedule }));
 });
 
@@ -283,12 +295,12 @@ export const getSchedules = asyncHandler(async (req, res) => {
 
   // 🟢 IST CONVERSION APPLIED TO SEARCH QUERY
   const targetDateString = toISTDateString(date);
-  
+
   const [year, month, day] = targetDateString.split("-").map(Number);
-  
+
   // This Date object is purely used to find the Day of the week in India
-  const targetDate = new Date(year, month - 1, day); 
-  
+  const targetDate = new Date(year, month - 1, day);
+
   const dayNames = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
   const targetDayName = dayNames[targetDate.getDay()];
   const targetDateNum = targetDate.getDate();
@@ -300,33 +312,52 @@ export const getSchedules = asyncHandler(async (req, res) => {
     return { weekNth, isLast, dayName: dayNames[d.getDay()] };
   };
 
-  const validSchedules = activeSchedules.filter((schedule) => {
-    const type = schedule.recurrenceType;
-    const pattern = schedule.recurrencePattern || {};
+  // ScheduleException is now the ONE place "cancel/override this schedule
+  // for one date" lives — recurrencePattern.excludedDates is retired (any
+  // still-stored values are ignored from here on; addSchedule/updateSchedule
+  // migrate them into ScheduleException rows instead of writing new ones).
+  const exceptionsForDate = await doctorService.getExceptionsForSchedulesOnDate(
+    activeSchedules.map((s) => s.id),
+    targetDateString
+  );
+  const exceptionBySchedule = new Map(exceptionsForDate.map((e) => [e.scheduleId, e]));
 
-    if (pattern.excludedDates && pattern.excludedDates.some(d => toISTDateString(d) === targetDateString)) {
-      return false; 
-    }
+  const validSchedules = activeSchedules
+    .map((schedule) => {
+      const exception = exceptionBySchedule.get(schedule.id);
+      if (!exception) return schedule;
+      if (exception.isCancelled) return null;
+      return {
+        ...schedule,
+        startTime: exception.overrideStartTime || schedule.startTime,
+        endTime: exception.overrideEndTime || schedule.endTime,
+        maxPatients: exception.overrideMaxPatients ?? schedule.maxPatients,
+      };
+    })
+    .filter((schedule) => {
+      if (!schedule) return false;
+      const type = schedule.recurrenceType;
+      const pattern = schedule.recurrencePattern || {};
 
-    if (type === "SPECIFIC_DATE") {
-      const savedDate = toISTDateString(pattern.exactDate);
-      return savedDate === targetDateString;
-    }
+      if (type === "SPECIFIC_DATE") {
+        const savedDate = toISTDateString(pattern.exactDate);
+        return savedDate === targetDateString;
+      }
 
-    if (type === "DAILY") return true; 
-    if (type === "WEEKLY") return pattern.days && pattern.days.includes(targetDayName);
-    if (type === "MONTHLY_DATE") return pattern.date === targetDateNum;
-    
-    if (type === "MONTHLY_WEEKDAY") {
-      const { weekNth, isLast, dayName } = getOrdinalData(targetDate);
-      if (pattern.day !== dayName) return false;
-      if (pattern.isLast && isLast) return true;
-      if (pattern.week === weekNth) return true;
+      if (type === "DAILY") return true;
+      if (type === "WEEKLY") return pattern.days && pattern.days.includes(targetDayName);
+      if (type === "MONTHLY_DATE") return pattern.date === targetDateNum;
+
+      if (type === "MONTHLY_WEEKDAY") {
+        const { weekNth, isLast, dayName } = getOrdinalData(targetDate);
+        if (pattern.day !== dayName) return false;
+        if (pattern.isLast && isLast) return true;
+        if (pattern.week === weekNth) return true;
+        return false;
+      }
+
       return false;
-    }
-    
-    return false;
-  });
+    });
 
   // Prisma range boundary (12:00:00 AM IST to 11:59:59 PM IST)
   // We use string representations mapped back to UTC bounds to ensure Prisma finds it regardless of hosting

@@ -13,23 +13,25 @@ export const updateClinicProfileSchema = z.object({
   googleMapsUrl: z.string().url("Must be a valid URL").optional().or(z.literal("")),
 });
 
-export const createDoctorSchema = z.object({
-  name: z.string().min(2, "Name is required"),
-  email: z.string().email("Invalid email"),
-  password: z.string().optional().refine((val) => !val || val.length >= 6, {
-  message: "Password must be at least 6 characters",
-}), // 🟢 FIXED: Added .optional()
-  phone: z.string().optional(),
-  specialization: z.string().optional(), // Kept for legacy/fallback text
-  specializationIds: z.array(z.string().uuid()).optional(), // DB-driven specializations
-  qualification: z.string().optional(),
-  experience: z.number().int().nonnegative().optional(),
-  fee: z.number().nonnegative().optional(),
-  startTime: z
-    .string()
-    .regex(/^([01]\d|2[0-3]):([0-5]\d)$/, "startTime must be in HH:mm 24-hour format")
-    .optional(),
-});
+export const createDoctorSchema = z
+  .object({
+    name: z.string().min(2, "Name is required"),
+    email: z.string().email("Invalid email").optional(),
+    phone: z.string().min(10, "Invalid phone number").optional(),
+    password: z.string().optional().refine((val) => !val || val.length >= 6, {
+      message: "Password must be at least 6 characters",
+    }),
+    specialization: z.string().optional(), // Kept for legacy/fallback text
+    specializationIds: z.array(z.string().uuid()).optional(), // DB-driven specializations
+    qualification: z.string().optional(),
+    experience: z.number().int().nonnegative().optional(),
+    fee: z.number().nonnegative().optional(),
+    startTime: z
+      .string()
+      .regex(/^([01]\d|2[0-3]):([0-5]\d)$/, "startTime must be in HH:mm 24-hour format")
+      .optional(),
+  })
+  .refine((data) => data.email || data.phone, { message: "Email or phone number is required" });
 
 export const updateDoctorSchema = z.object({
   startTime: z
@@ -44,12 +46,14 @@ export const updateDoctorSchema = z.object({
   queueMode: z.enum(["LIVE", "PRIVATE", "TIME_SLOT"]).optional(),
 });
 
-export const createReceptionistSchema = z.object({
-  name: z.string().min(2, "Name is required"),
-  email: z.string().email("Invalid email"),
-  password: z.string().min(6, "Password must be at least 6 characters"),
-  phone: z.string().optional(),
-});
+export const createReceptionistSchema = z
+  .object({
+    name: z.string().min(2, "Name is required"),
+    email: z.string().email("Invalid email").optional(),
+    phone: z.string().min(10, "Invalid phone number").optional(),
+    password: z.string().min(6, "Password must be at least 6 characters"),
+  })
+  .refine((data) => data.email || data.phone, { message: "Email or phone number is required" });
 
 export const assignDoctorsSchema = z.object({
   receptionistId: z.string().uuid(),
