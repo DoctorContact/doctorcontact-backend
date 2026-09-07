@@ -9,13 +9,20 @@ import { searchDoctorByEmail } from "./doctor.controller.js";
 const router = Router();
 
 // =========================================================================
-// 1. PUBLIC ROUTES (No Auth Required)
+// 1. PUBLIC ROUTES (No Auth Required) - সবাই দেখতে পারবে
 // =========================================================================
 
 router.get("/advanced-search", doctorController.advancedSearch);
 router.get("/featured", doctorController.getFeaturedDoctors);
 router.get("/available", doctorController.getAvailableDoctors);
 router.get("/", doctorController.getAllDoctors);
+
+// 🟢 FIX: Search রাউটগুলো পাবলিক করা হলো এবং authMiddleware সরানো হলো
+router.get("/search", doctorController.searchByName);
+router.get("/search-email", searchDoctorByEmail);
+router.get("/clinics/search", clinicController.searchByName);
+router.get("/live", doctorController.getLiveDoctors);
+
 
 // =========================================================================
 // 2. ADMIN ROUTES (Only Admin/Super Admin)
@@ -39,11 +46,7 @@ router.patch(
   doctorController.toggleDoctorAvailability
 );
 
-// 🟢 FIX: Search routes are safely placed BEFORE dynamic ID routes
-router.get("/search", authMiddleware, doctorController.searchByName);
-router.get("/search-email", authMiddleware, searchDoctorByEmail); // <-- ADDED HERE
-router.get("/clinics/search", authMiddleware, clinicController.searchByName);
-
+// 🔴 PROTECTED ROUTES BELOW (Requires Login)
 router.post(
   "/requests",
   authMiddleware,

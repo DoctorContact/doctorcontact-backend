@@ -395,3 +395,8 @@ export const getSchedules = asyncHandler(async (req, res) => {
 
   res.status(200).json(new ApiResponse(true, "Schedules fetched successfully", { schedules: schedulesWithCapacity }));
 });
+
+export const getLiveDoctors = asyncHandler(async (req, res) => {
+  const doctors = await doctorService.fetchLiveDoctors();
+  res.status(200).json(new ApiResponse(true, "Live doctors fetched successfully", doctors));
+});

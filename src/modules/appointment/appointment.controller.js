@@ -56,3 +56,5 @@ export const createWalkInAppointment = asyncHandler(async (req, res) => {
 
   res.status(201).json(new ApiResponse(true, "Patient added to queue successfully", result));
 });
+
+// ek hi korte parte pari- user korle ofline hbe-> oflline on calling vook

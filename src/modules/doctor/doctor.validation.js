@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const searchDoctorsByNameSchema = z.object({
-  name: z.string().min(1, "Name is required"),
+  name: z.string().optional().default(""),
 });
 
 export const sendRequestToDoctorSchema = z.object({

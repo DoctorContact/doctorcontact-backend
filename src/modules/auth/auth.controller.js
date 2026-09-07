@@ -102,29 +102,37 @@ export const patientPhoneAuth = asyncHandler(async (req, res) => {
 // ==================== REFRESH TOKEN ====================
 
 export const refresh = asyncHandler(async (req, res) => {
-  const incomingRefreshToken =
+  // 🟢 Update: Header থেকেও রিফ্রেশ টোকেন নেওয়ার অপশন রাখা হলো, যদি ফ্রন্টএন্ড থেকে Header এ পাঠায়
+  let incomingRefreshToken =
     req.cookies?.refreshToken || req.body?.refreshToken;
 
-  if (!incomingRefreshToken) {
-    return res
-      .status(401)
-      .json(
-        new ApiResponse(false, "Refresh token is required")
-      );
+  // Header Authorization চেক (Optionally)
+  if (!incomingRefreshToken && req.headers.authorization && req.headers.authorization.startsWith("Bearer ")) {
+      incomingRefreshToken = req.headers.authorization.split(" ")[1];
   }
 
-  const { user, accessToken, refreshToken } =
-    await authService.refreshTokens(incomingRefreshToken);
+  if (!incomingRefreshToken) {
+    // 🟢 Update: 401 রিটার্ন করো, throw ApiError না করে (যাতে লুপ না হয়)
+    return res.status(401).json(new ApiResponse(false, "Refresh token is required"));
+  }
 
-  res.cookie("refreshToken", refreshToken, COOKIE_OPTIONS);
+  try {
+    const { user, accessToken, refreshToken } = await authService.refreshTokens(incomingRefreshToken);
 
-  return res.status(200).json(
-    new ApiResponse(true, "Token refreshed successfully", {
-      user,
-      accessToken,
-      refreshToken,
-    })
-  );
+    res.cookie("refreshToken", refreshToken, COOKIE_OPTIONS);
+
+    return res.status(200).json(
+      new ApiResponse(true, "Token refreshed successfully", {
+        user,
+        accessToken,
+        refreshToken, // 🟢 Update: Response body তেও রিফ্রেশ টোকেন পাঠিয়ে দেওয়া হলো
+      })
+    );
+  } catch (error) {
+     // 🟢 Update: রিফ্রেশ টোকেন এক্সপায়ার হলে কুকি ক্লিয়ার করে দাও
+     res.clearCookie("refreshToken", COOKIE_OPTIONS);
+     throw new ApiError(401, "Refresh token is invalid or has been revoked");
+  }
 });
 
 // ==================== LOGOUT ====================

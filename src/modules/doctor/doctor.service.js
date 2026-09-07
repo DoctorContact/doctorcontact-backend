@@ -23,14 +23,14 @@ import {
   updateDoctorAvgConsultation,
   findApprovedAssociationByDoctorAndClinic,
   updateAssociationAvgConsultation,
+  updateDoctorProfilePhoto,
+  searchDoctorsAdvancedDB,
 } from "./doctor.repository.js";
 import { findConflict } from "./schedule.helper.js";
 import { emitDoctorDelay } from "../../sockets/queue.socket.js";
 import { findReceptionistAssignment } from "../queue/queue.repository.js";
 import { emitAppointmentNotification } from "../../sockets/notification.socket.js";
 import { uploadBufferToCloudinary, deleteFromCloudinary } from "../../utils/cloudinaryUpload.js";
-import { updateDoctorProfilePhoto } from "./doctor.repository.js";
-import { searchDoctorsAdvancedDB } from "./doctor.repository.js";
 import { evaluateDoctorStatus } from "./doctor.helper.js";
 
 import { checkScheduleConflict } from "./schedule.helper.js";
@@ -51,8 +51,6 @@ export const searchByName = async (name) => {
   return searchDoctorsByName(name);
 };
 
-// Clinic sends a request to a doctor
-// Clinic sends a request to a doctor
 // Clinic sends a request to a doctor
 export const sendRequestToDoctor = async (clinicUserId, payload) => {
   const clinic = await findClinicByUserId(clinicUserId);
@@ -126,7 +124,6 @@ export const respondToClinicRequest = async (doctorUserId, associationId, action
 // ==============================================
 
 export const getMyReceivedRequests = async (userId) => {
-  // ১. যদি ইউজার ডক্টর হয়
   const doctor = await findDoctorByUserId(userId);
   if (doctor) {
     return prisma.doctorClinicAssociation.findMany({
@@ -136,7 +133,6 @@ export const getMyReceivedRequests = async (userId) => {
     });
   }
 
-  // ২. যদি ইউজার ক্লিনিক হয়
   const clinic = await findClinicByUserId(userId);
   if (clinic) {
     return prisma.doctorClinicAssociation.findMany({
@@ -150,7 +146,6 @@ export const getMyReceivedRequests = async (userId) => {
 };
 
 export const getMySentRequests = async (userId) => {
-  // ১. যদি ইউজার ডক্টর হয়
   const doctor = await findDoctorByUserId(userId);
   if (doctor) {
     return prisma.doctorClinicAssociation.findMany({
@@ -160,7 +155,6 @@ export const getMySentRequests = async (userId) => {
     });
   }
 
-  // ২. যদি ইউজার ক্লিনিক হয়
   const clinic = await findClinicByUserId(userId);
   if (clinic) {
     return prisma.doctorClinicAssociation.findMany({
@@ -448,8 +442,6 @@ export const notifyDoctorDelay = async (user, doctorId, clinicId, delayMinutes) 
   return { notified: appointments.length };
 };
 
-// Clears a "Running Late"/"Paused" status back to normal — the Live Doctor
-// card should stop showing it immediately, not just after the day rolls over.
 export const resumeConsultation = async (user, doctorId, clinicId) => {
   await assertDoctorClinicManageAccess(user, doctorId, clinicId);
 
@@ -470,21 +462,43 @@ export const resumeConsultation = async (user, doctorId, clinicId) => {
   return { status: "NORMAL" };
 };
 
+
 // ==============================================
-// DOCTOR FETCH & STATUS UPDATE SERVICES
+// 🟢 DOCTOR FETCH & STATUS UPDATE SERVICES
 // ==============================================
 
+// 1. ALL DOCTORS (সমস্ত ডাক্তার, সাথে তাদের লাইভ স্ট্যাটাস)
 export const fetchAllDoctors = async () => {
-  return await getAllVerifiedDoctors();
+  return await searchDoctorsAdvanced({});
 };
 
+// 2. FEATURED DOCTORS (ফিচারড ডাক্তার)
 export const fetchFeaturedDoctors = async () => {
-  return await getFeaturedDoctors();
+  const doctors = await searchDoctorsAdvancedDB({});
+  return doctors
+    .filter(doc => doc.isFeatured)
+    .sort((a, b) => a.featuredOrder - b.featuredOrder)
+    .map(doctor => {
+      const status = evaluateDoctorStatus(doctor);
+      delete doctor.schedules;
+      delete doctor.leaves;
+      delete doctor.appointments;
+      return { ...doctor, liveStatus: status };
+    });
 };
 
+// 3. AVAILABLE DOCTORS (যাদের আজকের স্লট এখনো ফুল হয়নি)
 export const fetchAvailableDoctors = async () => {
-  return await getAvailableDoctors();
+  return await searchDoctorsAdvanced({ availableToday: true });
 };
+
+// 4. LIVE DOCTORS (যারা বর্তমানে চেম্বারে রোগী দেখছেন)
+export const fetchLiveDoctors = async () => {
+  return await searchDoctorsAdvanced({ liveNow: true });
+};
+
+
+// ==============================================
 
 export const updateFeaturedStatus = async (doctorId, isFeatured, featuredOrder) => {
   const doctor = await getDoctorByIdWithClinic(doctorId);
@@ -502,7 +516,6 @@ export const updateAvailabilityStatus = async (doctorId, isAvailable, userId, us
   const doctor = await getDoctorByIdWithClinic(doctorId);
   if (!doctor) throw new ApiError(404, "Doctor not found");
 
-  // --- PERMISSION LOGIC ---
   let canUpdate = false;
   if (userRole === "SUPER_ADMIN" || userRole === "ADMIN") {
     canUpdate = true;
@@ -529,13 +542,10 @@ export const uploadProfilePhoto = async (doctorUserId, fileBuffer) => {
 
   const oldPhoto = doctor.profilePhoto;
 
-  // Cloudinary-তে সেভ করা
   const result = await uploadBufferToCloudinary(fileBuffer, "jeet/doctors");
   
-  // ১. Doctor টেবিলের profilePhoto আপডেট (যাতে Featured/All Doctors কার্ডে শো করে)
   const updatedDoctor = await updateDoctorProfilePhoto(doctor.id, result.secure_url);
   
-  // ২. User টেবিলের avatar আপডেট (যাতে Header এবং Profile পেজে শো করে)
   await prisma.user.update({
     where: { id: doctorUserId },
     data: { avatar: result.secure_url }
@@ -551,11 +561,11 @@ export const getDoctorProfileWithClinics = async (doctorId, locationCity = null)
     where: { id: doctorId },
     include: {
       user: { select: { name: true, avatar: true, phone: true } },
-      clinic: true, // Primary Clinic
+      clinic: true, 
       clinicAssociations: {
         where: { 
           status: "APPROVED",
-          ...(locationCity ? { clinic: { city: locationCity } } : {}) // Global Location Filter
+          ...(locationCity ? { clinic: { city: locationCity } } : {}) 
         },
         include: { clinic: true }
       }
@@ -564,7 +574,6 @@ export const getDoctorProfileWithClinics = async (doctorId, locationCity = null)
 
   if (!doctor) throw new ApiError(404, "Doctor not found");
 
-  // Format and merge all clinics for frontend consistency
   const primaryClinic = {
     ...doctor.clinic,
     isPrimary: true,
@@ -587,7 +596,6 @@ export const getDoctorProfileWithClinics = async (doctorId, locationCity = null)
     }
   }));
 
-  // Filtering out primary clinic if location filter is active but primary clinic city doesn't match
   const allClinics = locationCity && doctor.clinic?.city !== locationCity 
     ? associatedClinics 
     : [primaryClinic, ...associatedClinics];
@@ -596,7 +604,7 @@ export const getDoctorProfileWithClinics = async (doctorId, locationCity = null)
 };
 
 export const addSchedule = async (user, doctorId, clinicId, payload) => {
-  await assertDoctorClinicManageAccess(user, doctorId, clinicId); // Reusing existing access control
+  await assertDoctorClinicManageAccess(user, doctorId, clinicId); 
 
   const existingSchedules = await findDoctorSchedules(doctorId, clinicId);
   const conflict = checkScheduleConflict(payload, existingSchedules);
@@ -625,7 +633,6 @@ export const editSchedule = async (user, doctorId, clinicId, scheduleId, payload
     throw new ApiError(404, "Schedule not found for this doctor/clinic");
   }
 
-  // If changing time/pattern, check conflicts against OTHER schedules
   if (payload.startTime || payload.endTime || payload.recurrencePattern) {
     const existingSchedules = (await findDoctorSchedules(doctorId, clinicId)).filter(s => s.id !== scheduleId);
     
@@ -651,8 +658,6 @@ export const removeSchedule = async (user, doctorId, clinicId, scheduleId) => {
     throw new ApiError(404, "Schedule not found");
   }
 
-  // In a real production system with existing appointments tied to a schedule, 
-  // you might want to soft-delete (isActive = false). For now, we do a hard delete or allow the frontend to set isActive = false via update.
   await deleteDoctorSchedule(scheduleId);
   return { deleted: true };
 };
@@ -665,7 +670,6 @@ export const getExceptionsForSchedulesOnDate = async (scheduleIds, date) => {
   return listExceptionsForSchedulesOnDate(scheduleIds, date);
 };
 
-// === Schedule Exceptions (Step 13) ===
 export const setScheduleException = async (user, scheduleId, payload) => {
   const schedule = await findDoctorScheduleById(scheduleId);
   if (!schedule) throw new ApiError(404, "Schedule not found");
@@ -722,7 +726,6 @@ export const searchDoctorsAdvanced = async (filters) => {
   let mappedDoctors = doctors.map(doctor => {
     const status = evaluateDoctorStatus(doctor);
     
-    // Clean up heavy arrays before sending to frontend
     delete doctor.schedules;
     delete doctor.leaves;
     delete doctor.appointments;
@@ -730,13 +733,13 @@ export const searchDoctorsAdvanced = async (filters) => {
     return { ...doctor, liveStatus: status };
   });
 
-  // Apply real-time JS filters
-  if (filters.liveNow) {
-    mappedDoctors = mappedDoctors.filter(doc => doc.liveStatus.isLive);
-  }
-  
-  if (filters.availableToday) {
-    mappedDoctors = mappedDoctors.filter(doc => doc.liveStatus.isAvailable);
+  // 🟢 FIX: Live এবং Available এর ফিল্টার আলাদা করা হলো
+  if (filters.liveNow === true) {
+    // শুধুমাত্র যারা এই মুহূর্তে Live আছে
+    mappedDoctors = mappedDoctors.filter(doc => doc.liveStatus?.isLive === true);
+  } else if (filters.availableToday === true) {
+    // শুধুমাত্র যাদের আজকের স্লট অ্যাভেইলেবল আছে
+    mappedDoctors = mappedDoctors.filter(doc => doc.liveStatus?.isAvailable === true);
   }
 
   return mappedDoctors;
