@@ -43,14 +43,23 @@ export const searchDoctors = async ({ q, doctorName, clinicName, clinicId, city,
   });
 
   if (date) {
+    // Queues are now per-session (unique on doctor+clinic+date+scheduleId), so a
+    // doctor can have several queues on one date. Aggregate them into a single
+    // day summary rather than looking up the removed doctorId_clinicId_date key.
     const doctorsWithQueue = await Promise.all(
       doctors.map(async (doctor) => {
-        const queue = await prisma.queue.findUnique({
-          where: {
-            doctorId_clinicId_date: { doctorId: doctor.id, clinicId: doctor.clinicId, date: new Date(date) },
-          },
+        if (!doctor.clinicId) return { ...doctor, todayQueue: null };
+        const queues = await prisma.queue.findMany({
+          where: { doctorId: doctor.id, clinicId: doctor.clinicId, date: new Date(date) },
         });
-        return { ...doctor, todayQueue: queue || null };
+        if (queues.length === 0) return { ...doctor, todayQueue: null };
+        const todayQueue = {
+          currentToken: Math.max(...queues.map((q) => q.currentToken)),
+          lastTokenIssued: queues.reduce((sum, q) => sum + q.lastTokenIssued, 0),
+          status: queues.every((q) => q.status === "CLOSED") ? "CLOSED" : "OPEN",
+          sessions: queues.length,
+        };
+        return { ...doctor, todayQueue };
       })
     );
     return doctorsWithQueue;

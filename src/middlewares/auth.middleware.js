@@ -29,4 +29,24 @@ const authMiddleware = asyncHandler(async (req, res, next) => {
   next();
 });
 
+// Like authMiddleware, but never rejects: attaches req.user when a valid token
+// is present and otherwise continues anonymously. For endpoints that are public
+// but expose extra data to logged-in staff.
+export const optionalAuth = asyncHandler(async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) return next();
+
+  try {
+    const decoded = verifyAccessToken(authHeader.split(" ")[1]);
+    const user = await findUserById(decoded.id);
+    if (user && user.isActive) {
+      const { password, refreshToken, ...safeUser } = user;
+      req.user = safeUser;
+    }
+  } catch {
+    // ignore — treat as anonymous
+  }
+  next();
+});
+
 export default authMiddleware;
