@@ -11,6 +11,7 @@ import {
 import { updateSettingsSchema } from "./admin.validation.js";
 import { createAdminSchema, createClinicSchema } from "./admin.validation.js";
 import { createDiagnosticCenterSchema, setFeaturedDoctorSchema } from "./admin.validation.js";
+import { createDoctorSchema } from "./admin.validation.js";
 
 export const listClinics = asyncHandler(async (req, res) => {
   const query = listClinicsQuerySchema.parse(req.query);
@@ -79,6 +80,25 @@ export const createClinic = asyncHandler(async (req, res) => {
   const data = createClinicSchema.parse(req.body);
   const result = await adminService.createClinic(data);
   res.status(201).json(new ApiResponse(true, "Clinic account created successfully", result));
+});
+
+export const createDoctor = asyncHandler(async (req, res) => {
+  const data = createDoctorSchema.parse(req.body);
+  const result = await adminService.createDoctor(data);
+  res.status(201).json(new ApiResponse(true, "Doctor account created successfully", result));
+});
+
+export const listBookings = asyncHandler(async (req, res) => {
+  const { clinicId, status, from, to, page = 1, limit = 20 } = req.query;
+  const result = await adminService.listAllBookings({
+    clinicId: clinicId || undefined,
+    status: status || undefined,
+    from: from || undefined,
+    to: to || undefined,
+    page: Number(page),
+    limit: Number(limit),
+  });
+  res.status(200).json(new ApiResponse(true, "Bookings fetched", result));
 });
 
 

@@ -155,6 +155,14 @@ export const getMyReceivedRequests = asyncHandler(async (req, res) => {
   res.status(200).json(new ApiResponse(true, "Received requests fetched", { requests }));
 });
 
+export const toggleAutoFollowup = asyncHandler(async (req, res) => {
+  const { enabled } = toggleOnlineConsultationSchema.parse(req.body);
+  const clinic = await clinicService.toggleAutoFollowup(req.user.id, enabled);
+  res.status(200).json(
+    new ApiResponse(true, `Automatic follow-up ${enabled ? "enabled" : "disabled"}`, { clinic }),
+  );
+});
+
 // ==========================================
 // PUBLIC CONTROLLERS
 // ==========================================

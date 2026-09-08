@@ -16,6 +16,11 @@ export const updateMyProfile = asyncHandler(async (req, res) => {
   res.status(200).json(new ApiResponse(true, "Diagnostic center profile updated", { center }));
 });
 
+export const getMyStaffProfile = asyncHandler(async (req, res) => {
+  const profile = await centerService.getStaffProfile(req.user.id);
+  res.status(200).json(new ApiResponse(true, "Staff profile fetched", { profile }));
+});
+
 export const addStaff = asyncHandler(async (req, res) => {
   const data = createStaffSchema.parse(req.body);
   const result = await centerService.addStaff(req.user.id, data);

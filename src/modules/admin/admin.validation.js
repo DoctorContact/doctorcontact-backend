@@ -62,6 +62,26 @@ export const createDiagnosticCenterSchema = z.object({
   pincode: z.string().optional(),
 });
 
+// Admin onboards a doctor. clinicId is intentionally OPTIONAL — an Admin can
+// add a doctor who is not attached to any clinic yet.
+export const createDoctorSchema = z
+  .object({
+    name: z.string().min(2, "Name is required"),
+    email: z.string().email("Invalid email").optional(),
+    phone: z.string().min(10, "Phone number is required").max(15).optional(),
+    password: z.string().min(6, "Password must be at least 6 characters"),
+    clinicId: z.string().uuid().optional(),
+    specialization: z.string().optional(),
+    specializationIds: z.array(z.string().uuid()).optional(),
+    qualification: z.string().optional(),
+    experience: z.coerce.number().int().min(0).optional(),
+    fee: z.coerce.number().min(0).optional(),
+  })
+  .refine((d) => d.email || d.phone, {
+    message: "Either email or phone is required",
+    path: ["email"],
+  });
+
 export const setFeaturedDoctorSchema = z.object({
   isFeatured: z.boolean(),
   featuredOrder: z.number().int().nonnegative().optional(),

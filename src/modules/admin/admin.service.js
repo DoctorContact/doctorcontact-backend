@@ -24,7 +24,9 @@ import {
   getPlatformStats,
   createAdminUser,
   createClinicUser,
+  createDoctorUser,
   createDiagnosticCenterUser,
+  findAllAppointments,
   updateDiagnosticCenterProfile,
   findAllDiagnosticCenters,
   findDiagnosticCenterByIdRaw,
@@ -146,6 +148,66 @@ export const createAdmin = async ({ name, email, password, phone }) => {
 
   const { password: _pw, refreshToken, ...safeUser } = user;
   return safeUser;
+};
+
+export const createDoctor = async ({
+  name,
+  email,
+  password,
+  phone,
+  clinicId,
+  specialization,
+  specializationIds,
+  qualification,
+  experience,
+  fee,
+}) => {
+  if (email && (await findUserByEmail(email))) {
+    throw new ApiError(409, "A user with this email already exists");
+  }
+  if (phone && (await findUserByPhone(phone))) {
+    throw new ApiError(409, "A user with this phone number already exists");
+  }
+
+  if (clinicId) {
+    const clinic = await findClinicByIdRaw(clinicId);
+    if (!clinic) throw new ApiError(404, "Clinic not found");
+  }
+
+  const hashedPassword = await hashPassword(password);
+
+  try {
+    const { user, doctor } = await createDoctorUser({
+      userData: { name, email, phone, password: hashedPassword },
+      doctorData: {
+        clinicId: clinicId ?? null,
+        specialization,
+        specializationIds,
+        qualification,
+        experience,
+        fee,
+      },
+    });
+
+    const { password: _pw, refreshToken, ...safeUser } = user;
+    return { user: safeUser, doctor };
+  } catch (error) {
+    if (error.code === "P2002" && error.meta?.target?.includes("phone")) {
+      throw new ApiError(409, "This phone number is already registered.");
+    }
+    throw error;
+  }
+};
+
+export const listAllBookings = async ({ clinicId, status, from, to, page, limit }) => {
+  return findAllAppointments({
+    clinicId,
+    status,
+    from: from ? new Date(from) : undefined,
+    to: to ? new Date(to) : undefined,
+    page,
+    limit,
+  });
 };
 
 export const createClinic = async ({ name, email, password, phone, clinicName, address, city, state, pincode }) => {

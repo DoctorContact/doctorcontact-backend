@@ -11,6 +11,14 @@ router.get("/search", authMiddleware, centerController.searchByName);
 router.get("/all", authMiddleware, centerController.listAllApprovedCenters);
 router.get("/global-tests", authMiddleware, centerController.getGlobalTests); // NEW
 
+// DIAGNOSTIC_STAFF portal: own profile + parent center
+router.get(
+  "/staff/me",
+  authMiddleware,
+  roleMiddleware("DIAGNOSTIC_STAFF"),
+  centerController.getMyStaffProfile
+);
+
 router.use(authMiddleware, roleMiddleware("DIAGNOSTIC_CENTER"));
 
 router.get("/profile", centerController.getMyProfile);

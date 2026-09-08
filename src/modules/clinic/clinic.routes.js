@@ -457,6 +457,15 @@ router.patch("/online-consultation", clinicController.toggleOnlineConsultation);
 
 /**
  * @swagger
+ * /clinic/auto-followup:
+ *   patch:
+ *     summary: Toggle automatic follow-up (after 1 month with no visit) on or off
+ *     tags: [Clinic]
+ */
+router.patch("/auto-followup", clinicController.toggleAutoFollowup);
+
+/**
+ * @swagger
  * /clinic/requests/received:
  *   get:
  *     summary: Get all doctor association requests received by the clinic

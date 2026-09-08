@@ -1,10 +1,13 @@
 import ApiError from "../../utils/apiError.js";
 import { notifyUser } from "../notification/notification.service.js";
+import { logAudit } from "../audit/audit.service.js";
 import {
   createReferral,
   findReferralById,
+  updateReferral,
   findReferralsForPatient,
   findReferralsForDiagnosticCenter,
+  countReferralsForDiagnosticCenter,
   findReferralsForClinic,
   findAllReferrals,
   getPatientByUserId,
@@ -15,6 +18,22 @@ import {
   getReceptionistByUserId,
   getDiagnosticStaffByUserId,
 } from "./testReferral.repository.js";
+import { findCenterByUserId } from "../diagnosticCenter/diagnosticCenter.repository.js";
+
+// Resolve which diagnostic center this user (owner or staff) belongs to.
+const resolveDiagnosticCenterId = async (user) => {
+  if (user.role === "DIAGNOSTIC_CENTER") {
+    const center = await findCenterByUserId(user.id);
+    if (!center) throw new ApiError(404, "Diagnostic center profile not found");
+    return center.id;
+  }
+  if (user.role === "DIAGNOSTIC_STAFF") {
+    const staff = await getDiagnosticStaffByUserId(user.id);
+    if (!staff) throw new ApiError(404, "Staff profile not found");
+    return staff.diagnosticCenterId;
+  }
+  throw new ApiError(403, "Only a Diagnostic Center or its staff can perform this action");
+};
 
 const resolveCreatorContext = async (user) => {
   if (user.role === "DOCTOR") {
@@ -90,23 +109,80 @@ export const getMyReferralsAsPatient = async (userId, { page, limit }) => {
   return findReferralsForPatient({ patientId: patient.id, page, limit });
 };
 
-export const getIncomingReferrals = async (user, { page, limit }) => {
-  let diagnosticCenterId;
+export const getIncomingReferrals = async (user, { page, limit, status }) => {
+  const diagnosticCenterId = await resolveDiagnosticCenterId(user);
+  return findReferralsForDiagnosticCenter({ diagnosticCenterId, page, limit, status });
+};
 
-  if (user.role === "DIAGNOSTIC_CENTER") {
-    const { findCenterByUserId } = await import("../diagnosticCenter/diagnosticCenter.repository.js");
-    const center = await findCenterByUserId(user.id);
-    if (!center) throw new ApiError(404, "Diagnostic center profile not found");
-    diagnosticCenterId = center.id;
-  } else if (user.role === "DIAGNOSTIC_STAFF") {
-    const staff = await getDiagnosticStaffByUserId(user.id);
-    if (!staff) throw new ApiError(404, "Staff profile not found");
-    diagnosticCenterId = staff.diagnosticCenterId;
-  } else {
-    throw new ApiError(403, "Only a Diagnostic Center or its staff can view incoming referrals");
+// Dashboard summary for the diagnostic center / staff portal.
+export const getCenterReferralStats = async (user) => {
+  const diagnosticCenterId = await resolveDiagnosticCenterId(user);
+  return countReferralsForDiagnosticCenter(diagnosticCenterId);
+};
+
+// Single referral, visible to the patient it belongs to, the referring clinic,
+// or the diagnostic center / staff it was sent to.
+export const getReferralDetails = async (user, id) => {
+  const referral = await findReferralById(id);
+  if (!referral) throw new ApiError(404, "Referral not found");
+
+  if (user.role === "PATIENT") {
+    if (referral.patient?.userId !== user.id) throw new ApiError(403, "Not your referral");
+  } else if (user.role === "DIAGNOSTIC_CENTER" || user.role === "DIAGNOSTIC_STAFF") {
+    const centerId = await resolveDiagnosticCenterId(user);
+    if (referral.diagnosticCenterId !== centerId) throw new ApiError(403, "Not your referral");
+  } else if (user.role === "CLINIC") {
+    const clinic = await getClinicByUserId(user.id);
+    if (!clinic || referral.referringClinicId !== clinic.id) throw new ApiError(403, "Not your referral");
+  } else if (!["ADMIN", "SUPER_ADMIN"].includes(user.role)) {
+    throw new ApiError(403, "Not allowed");
   }
 
-  return findReferralsForDiagnosticCenter({ diagnosticCenterId, page, limit });
+  return referral;
+};
+
+// Diagnostic center / staff move a referral through its processing workflow.
+export const updateReferralStatus = async (user, id, { status, resultNotes }) => {
+  const centerId = await resolveDiagnosticCenterId(user);
+
+  const referral = await findReferralById(id);
+  if (!referral) throw new ApiError(404, "Referral not found");
+  if (referral.diagnosticCenterId !== centerId) throw new ApiError(403, "Not your referral");
+
+  const updated = await updateReferral(id, {
+    status,
+    ...(resultNotes !== undefined && { resultNotes }),
+    processedByUserId: user.id,
+    ...(status === "COMPLETED" && { completedAt: new Date() }),
+  });
+
+  // Keep the patient informed as their test progresses.
+  if (referral.patient?.userId) {
+    const labels = {
+      PENDING: "is pending",
+      IN_PROGRESS: "is now in progress",
+      COMPLETED: "has been completed",
+      CANCELLED: "has been cancelled",
+    };
+    await notifyUser({
+      userId: referral.patient.userId,
+      type: "GENERAL",
+      title: "Test Update",
+      message: `Your test (${referral.testNames.join(", ")}) at ${referral.diagnosticCenter?.centerName ?? "the diagnostic center"} ${labels[status]}.`,
+      meta: { referralId: id, status },
+    });
+  }
+
+  await logAudit({
+    actorUserId: user.id,
+    actorRole: user.role,
+    action: "TEST_REFERRAL_STATUS_UPDATED",
+    targetType: "TestReferral",
+    targetId: id,
+    meta: { status },
+  });
+
+  return updated;
 };
 
 export const getSentReferrals = async (clinicUserId, { page, limit }) => {

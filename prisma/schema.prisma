@@ -58,6 +58,9 @@ model Clinic {
   isFeatured                Boolean                   @default(false)
   featuredOrder             Int                       @default(0)
   isAvailableToday          Boolean                   @default(true)
+  // When ON, a patient with no visit in the last 1 month is auto-scheduled a
+  // follow-up (and notified) by the daily follow-up job.
+  autoFollowupEnabled       Boolean                   @default(false)
   // -----------------------------------
 
   announcements             Announcement[]
@@ -86,7 +89,10 @@ model Clinic {
 model Doctor {
   id                     String                    @id @default(uuid())
   userId                 String                    @unique
-  clinicId               String
+  // Optional: an Admin can onboard a doctor who is not yet attached to any clinic.
+  // Clinic-scoped features (queues, reception booking) only apply once the doctor
+  // is associated with a clinic via DoctorClinicAssociation.
+  clinicId               String?
   specialization         String?
   qualification          String?
   experience             Int?
@@ -107,7 +113,7 @@ model Doctor {
   appointments           Appointment[]
   clinicAssociations     DoctorClinicAssociation[]
   leaves                 DoctorLeave[]
-  clinic                 Clinic                    @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  clinic                 Clinic?                   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
   user                   User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
   queues                 Queue[]
   assignedReceptionists  ReceptionistDoctor[]
@@ -419,7 +425,7 @@ model DiagnosticCenterStaff {
 }
 
 model TestReferral {
-  id                 String           @id @default(uuid())
+  id                 String             @id @default(uuid())
   patientId          String
   appointmentId      String?
   testNames          String[]
@@ -428,8 +434,13 @@ model TestReferral {
   diagnosticCenterId String
   createdByUserId    String
   createdByRole      Role
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
+  // Diagnostic-side processing workflow (updated by the center or its staff)
+  status             TestReferralStatus @default(PENDING)
+  resultNotes        String?
+  processedByUserId  String?
+  completedAt        DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
   appointment        Appointment?     @relation(fields: [appointmentId], references: [id])
   diagnosticCenter   DiagnosticCenter @relation(fields: [diagnosticCenterId], references: [id], onDelete: Cascade)
   patient            Patient          @relation(fields: [patientId], references: [id], onDelete: Cascade)
@@ -700,6 +711,13 @@ model Followup {
 
 enum FollowupStatus {
   SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+enum TestReferralStatus {
+  PENDING
+  IN_PROGRESS
   COMPLETED
   CANCELLED
 }
