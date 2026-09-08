@@ -1,5 +1,6 @@
 import asyncHandler from "../../utils/asyncHandler.js";
 import ApiResponse from "../../utils/apiResponse.js";
+import ApiError from "../../utils/apiError.js";
 import * as appointmentService from "./appointment.service.js";
 import {
   searchDoctorsSchema,

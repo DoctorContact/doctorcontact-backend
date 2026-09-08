@@ -28,6 +28,7 @@ import {
 } from "./doctor.repository.js";
 import { findConflict } from "./schedule.helper.js";
 import { emitDoctorDelay } from "../../sockets/queue.socket.js";
+import { emitLiveDoctorsChanged } from "../../sockets/doctor.socket.js";
 import { findReceptionistAssignment } from "../queue/queue.repository.js";
 import { emitAppointmentNotification } from "../../sockets/notification.socket.js";
 import { uploadBufferToCloudinary, deleteFromCloudinary } from "../../utils/cloudinaryUpload.js";
@@ -379,6 +380,7 @@ export const markDoctorOnLeave = async (user, doctorId, clinicId, date, reason) 
     meta: { clinicId, date, reason },
   });
 
+  emitLiveDoctorsChanged({ reason: "doctor_leave", doctorId, clinicId });
   return leave;
 };
 
@@ -387,6 +389,7 @@ export const cancelDoctorLeave = async (user, doctorId, clinicId, date) => {
 
   const result = await removeDoctorLeave(doctorId, clinicId, date);
   if (result.count === 0) throw new ApiError(404, "No leave found for this date");
+  emitLiveDoctorsChanged({ reason: "doctor_leave_cancelled", doctorId, clinicId });
   return { removed: true };
 };
 
@@ -415,6 +418,7 @@ export const notifyDoctorDelay = async (user, doctorId, clinicId, delayMinutes) 
   });
 
   emitDoctorDelay(doctorId, clinicId, { delayMinutes, date: today });
+  emitLiveDoctorsChanged({ reason: "doctor_delay", doctorId, clinicId });
 
   await Promise.all(
     appointments
@@ -449,6 +453,7 @@ export const resumeConsultation = async (user, doctorId, clinicId) => {
   await upsertDoctorDailyStatus(doctorId, clinicId, today, { status: "NORMAL", delayMinutes: null });
 
   emitDoctorDelay(doctorId, clinicId, { delayMinutes: 0, date: today, resumed: true });
+  emitLiveDoctorsChanged({ reason: "doctor_resumed", doctorId, clinicId });
 
   await logAudit({
     actorUserId: user.id,
@@ -533,7 +538,9 @@ export const updateAvailabilityStatus = async (doctorId, isAvailable, userId, us
     isAvailable: isAvailable !== undefined ? isAvailable : !doctor.isAvailable
   };
 
-  return await updateDoctorDetails(doctorId, dataToUpdate);
+  const updated = await updateDoctorDetails(doctorId, dataToUpdate);
+  emitLiveDoctorsChanged({ reason: "doctor_availability", doctorId });
+  return updated;
 };
 
 export const uploadProfilePhoto = async (doctorUserId, fileBuffer) => {
@@ -613,7 +620,7 @@ export const addSchedule = async (user, doctorId, clinicId, payload) => {
     throw new ApiError(409, `This schedule conflicts with an existing session (${conflict.startTime}-${conflict.endTime})`);
   }
 
-  return createDoctorSchedule({
+  const created = await createDoctorSchedule({
     doctorId,
     clinicId,
     startTime: payload.startTime,
@@ -625,6 +632,8 @@ export const addSchedule = async (user, doctorId, clinicId, payload) => {
     // Clinic can disable ONLINE booking for this session; walk-in/reception still work.
     onlineBookingEnabled: payload.onlineBookingEnabled ?? true,
   });
+  emitLiveDoctorsChanged({ reason: "schedule_added", doctorId, clinicId });
+  return created;
 };
 
 export const editSchedule = async (user, doctorId, clinicId, scheduleId, payload) => {
@@ -649,7 +658,9 @@ export const editSchedule = async (user, doctorId, clinicId, scheduleId, payload
     if (conflict) throw new ApiError(409, `Update conflicts with existing session (${conflict.startTime}-${conflict.endTime})`);
   }
 
-  return updateDoctorSchedule(scheduleId, payload);
+  const updated = await updateDoctorSchedule(scheduleId, payload);
+  emitLiveDoctorsChanged({ reason: "schedule_edited", doctorId, clinicId });
+  return updated;
 };
 
 export const removeSchedule = async (user, doctorId, clinicId, scheduleId) => {
@@ -661,6 +672,7 @@ export const removeSchedule = async (user, doctorId, clinicId, scheduleId) => {
   }
 
   await deleteDoctorSchedule(scheduleId);
+  emitLiveDoctorsChanged({ reason: "schedule_removed", doctorId, clinicId });
   return { deleted: true };
 };
 

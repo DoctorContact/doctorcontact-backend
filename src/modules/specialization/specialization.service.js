@@ -11,7 +11,12 @@ export const addSpecialization = async (data) => {
 export const editSpecialization = async (id, data) => {
   const existing = await specializationRepo.findSpecializationById(id);
   if (!existing) throw new ApiError(404, "Specialization not found");
-  
+
+  if (data.name && data.name !== existing.name) {
+    const clash = await specializationRepo.findSpecializationByName(data.name);
+    if (clash) throw new ApiError(409, "Another specialization already uses this name");
+  }
+
   return specializationRepo.updateSpecialization(id, data);
 };
 

@@ -21,6 +21,7 @@ router.get("/", doctorController.getAllDoctors);
 router.get("/search", doctorController.searchByName);
 router.get("/search-email", searchDoctorByEmail);
 router.get("/clinics/search", clinicController.searchByName);
+router.get("/live/count", doctorController.getLiveDoctorsCount);
 router.get("/live", doctorController.getLiveDoctors);
 
 

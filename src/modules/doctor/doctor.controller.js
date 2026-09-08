@@ -400,3 +400,10 @@ export const getLiveDoctors = asyncHandler(async (req, res) => {
   const doctors = await doctorService.fetchLiveDoctors();
   res.status(200).json(new ApiResponse(true, "Live doctors fetched successfully", doctors));
 });
+
+// Lightweight count for the header "Live Doctors" pill — clients refetch this on
+// the `liveDoctorsChanged` socket event / window focus instead of polling.
+export const getLiveDoctorsCount = asyncHandler(async (req, res) => {
+  const doctors = await doctorService.fetchLiveDoctors();
+  res.status(200).json(new ApiResponse(true, "Live doctor count fetched", { count: doctors.length }));
+});

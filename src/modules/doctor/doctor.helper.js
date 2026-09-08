@@ -35,6 +35,11 @@ export const evaluateDoctorStatus = (doctor) => {
     return { isAvailable: false, isLive: false, reason: "Doctor on Leave", capacity: null };
   }
 
+  // 2b. Manual unavailability toggle (Step 38/40) — overrides schedule entirely.
+  if (doctor.isAvailable === false) {
+    return { isAvailable: false, isLive: false, reason: "Doctor Unavailable", capacity: null };
+  }
+
   // 3. Filter Today's Active Schedules (applying any one-off exception first)
   const todaysSchedules = (doctor.schedules || [])
     .filter((sch) => sch.isActive)
