@@ -156,3 +156,4 @@ export const deactivateClinic = asyncHandler(async (req, res) => {
   await adminService.deactivateClinic(req.params.clinicId);
   res.status(200).json(new ApiResponse(true, "Clinic deactivated successfully"));
 });
+
