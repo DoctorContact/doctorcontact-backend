@@ -621,7 +621,9 @@ export const addSchedule = async (user, doctorId, clinicId, payload) => {
     maxPatients: payload.maxPatients,
     recurrenceType: payload.recurrenceType,
     recurrencePattern: payload.recurrencePattern,
-    isActive: payload.isActive
+    isActive: payload.isActive,
+    // Clinic can disable ONLINE booking for this session; walk-in/reception still work.
+    onlineBookingEnabled: payload.onlineBookingEnabled ?? true,
   });
 };
 

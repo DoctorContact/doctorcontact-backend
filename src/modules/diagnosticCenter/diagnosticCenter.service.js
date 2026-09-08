@@ -29,6 +29,13 @@ export const getMyProfile = async (userId) => {
   return center;
 };
 
+// DIAGNOSTIC_STAFF: their own profile + the center they belong to.
+export const getStaffProfile = async (userId) => {
+  const staff = await findStaffByUserId(userId);
+  if (!staff) throw new ApiError(404, "Staff profile not found");
+  return staff;
+};
+
 export const updateMyProfile = async (userId, data) => {
   const center = await findCenterByUserId(userId);
   if (!center) throw new ApiError(404, "Diagnostic center profile not found");

@@ -191,6 +191,9 @@ export const findReceptionistByUserId = (userId) => prisma.receptionist.findUniq
 export const findReceivedRequestsForClinic = (clinicId) => prisma.doctorClinicAssociation.findMany({ where: { clinicId, requestedBy: "DOCTOR" }, include: { doctor: { include: { user: { select: { name: true, email: true, phone: true } } } } }, orderBy: { createdAt: "desc" } });
 
 // Toggle real-time active status
+export const setAutoFollowupEnabled = (clinicId, enabled) =>
+  prisma.clinic.update({ where: { id: clinicId }, data: { autoFollowupEnabled: enabled } });
+
 export const updateClinicAvailability = (clinicId, isAvailableToday) => {
   return prisma.clinic.update({
     where: { id: clinicId },

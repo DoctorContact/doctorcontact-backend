@@ -328,6 +328,14 @@ export const toggleAvailability = async (clinicUserId, isAvailableToday) => {
   return clinicRepo.updateClinicAvailability(clinic.id, isAvailableToday);
 };
 
+// ON/OFF switch: when ON, the daily job auto-schedules a follow-up for any
+// patient of this clinic who has not visited in the last month.
+export const toggleAutoFollowup = async (clinicUserId, enabled) => {
+  const clinic = await clinicRepo.findClinicByUserId(clinicUserId);
+  if (!clinic) throw new ApiError(404, "Clinic profile not found");
+  return clinicRepo.setAutoFollowupEnabled(clinic.id, enabled);
+};
+
 // ==========================================
 // PUBLIC SERVICES
 // ==========================================

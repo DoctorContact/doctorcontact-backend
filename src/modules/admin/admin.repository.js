@@ -82,6 +82,55 @@ export const createAdminUser = (data) => {
   });
 };
 
+// Admin-created doctor. clinicId is optional — a doctor may be onboarded before
+// being attached to any clinic.
+export const createDoctorUser = ({ userData, doctorData }) => {
+  const { specializationIds, clinicId, ...rest } = doctorData || {};
+  return prisma.$transaction(async (tx) => {
+    const user = await tx.user.create({
+      data: { ...userData, role: "DOCTOR", selfRegistered: false, isVerified: true },
+    });
+
+    const payload = { ...rest, userId: user.id, clinicId: clinicId ?? null };
+    if (specializationIds && specializationIds.length > 0) {
+      payload.specializations = {
+        create: specializationIds.map((id) => ({ specializationId: id })),
+      };
+    }
+
+    const doctor = await tx.doctor.create({ data: payload });
+    return { user, doctor };
+  });
+};
+
+// Global bookings feed for Super Admin — every clinic's patient appointments.
+export const findAllAppointments = async ({ clinicId, status, from, to, page = 1, limit = 20 }) => {
+  const where = {
+    ...(clinicId && { clinicId }),
+    ...(status && { status }),
+    ...((from || to) && {
+      date: { ...(from && { gte: from }), ...(to && { lte: to }) },
+    }),
+  };
+
+  const [items, total] = await Promise.all([
+    prisma.appointment.findMany({
+      where,
+      include: {
+        patient: { select: { name: true, phone: true, user: { select: { name: true, phone: true } } } },
+        doctor: { select: { user: { select: { name: true } } } },
+        clinic: { select: { clinicName: true, city: true } },
+      },
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+    prisma.appointment.count({ where }),
+  ]);
+
+  return { items, total, page, limit };
+};
+
 export const createClinicUser = ({ userData, clinicName }) => {
   return prisma.$transaction(async (tx) => {
     const user = await tx.user.create({

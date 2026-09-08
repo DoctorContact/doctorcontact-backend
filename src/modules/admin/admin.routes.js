@@ -232,6 +232,12 @@ router.patch("/settings", roleMiddleware("SUPER_ADMIN"), adminController.updateS
  */
 router.post("/clinics", adminController.createClinic);
 
+// Admin can onboard a doctor with or without a clinic (clinicId optional).
+router.post("/doctors", adminController.createDoctor);
+
+// Super Admin: global bookings feed across every clinic.
+router.get("/bookings", roleMiddleware("SUPER_ADMIN"), adminController.listBookings);
+
 router.post("/diagnostic-centers", adminController.createDiagnosticCenter);
 router.get("/diagnostic-centers", adminController.listDiagnosticCenters);
 router.patch("/diagnostic-centers/:centerId/approve", adminController.approveDiagnosticCenter);

@@ -53,3 +53,48 @@ export const findDueFollowupsForReminder = (dateOnly) =>
 
 export const markReminderSent = (id) =>
   prisma.followup.update({ where: { id }, data: { reminderSentAt: new Date() } });
+
+// ---- Automatic follow-up (Clinic.autoFollowupEnabled) --------------------
+// Candidates: the patient's LAST completed appointment at an auto-enabled clinic
+// was ~1 month ago (between `from` and `to`), and since then they have neither
+// visited again nor already have an open follow-up at that clinic.
+export const findAutoFollowupCandidates = async ({ from, to }) => {
+  const appts = await prisma.appointment.findMany({
+    where: {
+      status: "COMPLETED",
+      date: { gte: from, lt: to },
+      clinic: { autoFollowupEnabled: true },
+    },
+    select: {
+      id: true,
+      patientId: true,
+      doctorId: true,
+      clinicId: true,
+      date: true,
+      patient: { select: { userId: true, name: true } },
+      doctor: { select: { user: { select: { name: true } } } },
+      clinic: { select: { clinicName: true, userId: true } },
+    },
+  });
+
+  const candidates = [];
+  for (const a of appts) {
+    const laterVisit = await prisma.appointment.findFirst({
+      where: { patientId: a.patientId, clinicId: a.clinicId, date: { gt: a.date } },
+      select: { id: true },
+    });
+    if (laterVisit) continue;
+
+    const openFollowup = await prisma.followup.findFirst({
+      where: { patientId: a.patientId, clinicId: a.clinicId, status: "SCHEDULED" },
+      select: { id: true },
+    });
+    if (openFollowup) continue;
+
+    candidates.push(a);
+  }
+  return candidates;
+};
+
+export const autoFollowupExists = (patientId, clinicId, appointmentId) =>
+  prisma.followup.findFirst({ where: { patientId, clinicId, appointmentId } });

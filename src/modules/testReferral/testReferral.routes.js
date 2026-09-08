@@ -21,6 +21,13 @@ router.get(
   referralController.getIncomingReferrals
 );
 
+router.get(
+  "/stats",
+  authMiddleware,
+  roleMiddleware("DIAGNOSTIC_CENTER", "DIAGNOSTIC_STAFF"),
+  referralController.getCenterStats
+);
+
 router.get("/sent", authMiddleware, roleMiddleware("CLINIC"), referralController.getSentReferrals);
 
 router.get(
@@ -28,6 +35,20 @@ router.get(
   authMiddleware,
   roleMiddleware("SUPER_ADMIN", "ADMIN"),
   referralController.getAllReferrals
+);
+
+router.get(
+  "/:id",
+  authMiddleware,
+  roleMiddleware("PATIENT", "CLINIC", "DIAGNOSTIC_CENTER", "DIAGNOSTIC_STAFF", "ADMIN", "SUPER_ADMIN"),
+  referralController.getReferralById
+);
+
+router.patch(
+  "/:id/status",
+  authMiddleware,
+  roleMiddleware("DIAGNOSTIC_CENTER", "DIAGNOSTIC_STAFF"),
+  referralController.updateReferralStatus
 );
 
 export default router;
