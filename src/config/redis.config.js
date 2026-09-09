@@ -1,10 +1,17 @@
-import Redis from "ioredis";
-import { env } from "./env.config.js";
-import logger from "./logger.config.js";
+import { createClient } from "redis";
 
-const redis = new Redis(env.REDIS_URL);
+const redisClient = createClient({
+  url: process.env.REDIS_URL || "redis://localhost:6379",
+});
 
-redis.on("connect", () => logger.info("✅ Redis connected"));
-redis.on("error", (err) => logger.error({ err }, "❌ Redis connection error"));
+redisClient.on("error", (err) => console.error("Redis Client Error:", err));
+redisClient.on("connect", () => console.log("Redis connected successfully"));
 
-export default redis;
+// Auto-connect on startup
+(async () => {
+  if (!redisClient.isOpen) {
+    await redisClient.connect();
+  }
+})();
+
+export default redisClient;

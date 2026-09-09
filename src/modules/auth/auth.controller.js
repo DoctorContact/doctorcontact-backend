@@ -1,6 +1,9 @@
 import asyncHandler from "../../utils/asyncHandler.js";
 import ApiResponse from "../../utils/apiResponse.js";
 import { COOKIE_OPTIONS } from "./auth.constants.js";
+import redisClient from "../../config/redis.config.js";
+import { sendOTP } from "./otp.service.js";
+import ApiError from "../../utils/apiError.js";
 
 import {
   registerSchema,
@@ -102,17 +105,14 @@ export const patientPhoneAuth = asyncHandler(async (req, res) => {
 // ==================== REFRESH TOKEN ====================
 
 export const refresh = asyncHandler(async (req, res) => {
-  // 🟢 Update: Header থেকেও রিফ্রেশ টোকেন নেওয়ার অপশন রাখা হলো, যদি ফ্রন্টএন্ড থেকে Header এ পাঠায়
   let incomingRefreshToken =
     req.cookies?.refreshToken || req.body?.refreshToken;
 
-  // Header Authorization চেক (Optionally)
   if (!incomingRefreshToken && req.headers.authorization && req.headers.authorization.startsWith("Bearer ")) {
       incomingRefreshToken = req.headers.authorization.split(" ")[1];
   }
 
   if (!incomingRefreshToken) {
-    // 🟢 Update: 401 রিটার্ন করো, throw ApiError না করে (যাতে লুপ না হয়)
     return res.status(401).json(new ApiResponse(false, "Refresh token is required"));
   }
 
@@ -125,11 +125,10 @@ export const refresh = asyncHandler(async (req, res) => {
       new ApiResponse(true, "Token refreshed successfully", {
         user,
         accessToken,
-        refreshToken, // 🟢 Update: Response body তেও রিফ্রেশ টোকেন পাঠিয়ে দেওয়া হলো
+        refreshToken, 
       })
     );
   } catch (error) {
-     // 🟢 Update: রিফ্রেশ টোকেন এক্সপায়ার হলে কুকি ক্লিয়ার করে দাও
      res.clearCookie("refreshToken", COOKIE_OPTIONS);
      throw new ApiError(401, "Refresh token is invalid or has been revoked");
   }
@@ -181,15 +180,17 @@ export const resetPassword = asyncHandler(async (req, res) => {
 // ==================== RESET PASSWORD (PHONE) ====================
 
 export const resetPasswordByPhone = asyncHandler(async (req, res) => {
-  const data = resetPasswordByPhoneSchema.parse(req.body);
+  const { phone, otp, newPassword } = req.body;
 
-  await authService.resetPasswordByPhone(data);
+  const storedOtp = await redisClient.get(`OTP:${phone}`);
+  if (!storedOtp || storedOtp !== otp) {
+    throw new ApiError(400, "Invalid or expired OTP");
+  }
+  await redisClient.del(`OTP:${phone}`);
 
-  res
-    .status(200)
-    .json(
-      new ApiResponse(true, "Password reset successfully")
-    );
+  await authService.resetPasswordByPhone({ phone, newPassword });
+
+  res.status(200).json(new ApiResponse(true, "Password reset successfully"));
 });
 
 // ==================== GET CURRENT USER ====================
@@ -198,6 +199,53 @@ export const getMe = asyncHandler(async (req, res) => {
   res.status(200).json(
     new ApiResponse(true, "Current user fetched", {
       user: req.user,
+    })
+  );
+});
+
+// ==================== OTP SEND (MSG91) ====================
+export const requestOtp = asyncHandler(async (req, res) => {
+  const { phone } = req.body;
+  if (!phone) {
+    return res.status(400).json(new ApiResponse(false, "Phone number is required"));
+  }
+
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  await redisClient.setEx(`OTP:${phone}`, 300, otp);
+  
+  const isSent = await sendOTP(phone, otp);
+
+  // SMS ফেইল করলে Redis থেকে OTP ক্লিয়ার করে Error থ্রো করবে
+  if (!isSent) {
+    await redisClient.del(`OTP:${phone}`);
+    throw new ApiError(500, "Failed to send OTP. Service unavailable or low balance.");
+  }
+
+  res.status(200).json(new ApiResponse(true, "OTP sent successfully"));
+});
+
+// ==================== OTP VERIFY & LOGIN ====================
+export const verifyOtp = asyncHandler(async (req, res) => {
+  const { phone, otp, name } = req.body;
+
+  const storedOtp = await redisClient.get(`OTP:${phone}`);
+  if (!storedOtp || storedOtp !== otp) {
+    throw new ApiError(400, "Invalid or expired OTP");
+  }
+
+  await redisClient.del(`OTP:${phone}`);
+
+  const { user, accessToken, refreshToken, isNewAccount } =
+    await authService.patientPhoneAuth({ phone, name });
+
+  res.cookie("refreshToken", refreshToken, COOKIE_OPTIONS);
+
+  res.status(200).json(
+    new ApiResponse(true, isNewAccount ? "Account created" : "Login successful", {
+      user,
+      accessToken,
+      refreshToken,
+      isNewAccount,
     })
   );
 });

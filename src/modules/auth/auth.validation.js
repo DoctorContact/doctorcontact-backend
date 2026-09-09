@@ -22,8 +22,9 @@ export const loginSchema = z
 // after the user confirms the SMS OTP. `name` is only required the first
 // time (brand-new phone number, no account yet).
 export const patientPhoneAuthSchema = z.object({
-  idToken: z.string().min(10, "A valid Firebase ID token is required"),
-  name: z.string().min(2, "Name is required").optional(),
+  phone: z.string().min(10, "Valid phone number required"),
+  otp: z.string().length(6, "OTP must be 6 digits"),
+  name: z.string().optional(),
 });
 
 export const forgotPasswordSchema = z.object({
@@ -40,8 +41,9 @@ export const resetPasswordSchema = z.object({
 // idToken already proves phone ownership (Firebase OTP was confirmed on the
 // frontend), so this is a single call — no separate "send OTP" step needed.
 export const resetPasswordByPhoneSchema = z.object({
-  idToken: z.string().min(10, "A valid Firebase ID token is required"),
-  newPassword: z.string().min(6, "Password must be at least 6 characters"),
+  phone: z.string().min(10),
+  otp: z.string().length(6),
+  newPassword: z.string().min(6),
 });
 
 // Clinic Profile Update or Registration Schema
@@ -55,3 +57,4 @@ export const clinicProfileSchema = z.object({
   whatsapp: z.string().optional(),
   googleMapsUrl: z.string().url("Must be a valid URL").optional().or(z.literal("")),
 });
+

@@ -1,52 +1,52 @@
-import axios from 'axios';
-import prisma from '../../config/db.config.js';
-import ApiError from '../../utils/apiError.js';
-import { normalizePhone } from '../../utils/phoneNormalizer.js';
+import axios from "axios";
 
-export const generateAndSendOtp = async (phone) => {
-  const normalizedPhone = normalizePhone(phone);
-  if (!normalizedPhone || normalizedPhone.length !== 10) {
-    throw new ApiError(400, "Invalid Indian mobile number");
-  }
-
-  // Generate 6-digit OTP
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 mins expiry
-
-  // Upsert OTP in database
-  await prisma.otpSession.upsert({
-    where: { phone: normalizedPhone },
-    update: { otp, expiresAt },
-    create: { phone: normalizedPhone, otp, expiresAt }
-  });
-
-  // Fast2SMS API Call (Using generic route for testing)
+export const sendOTP = async (phone, otp) => {
   try {
-    await axios.get('https://www.fast2sms.com/dev/bulkV2', {
-      params: {
-        authorization: process.env.FAST2SMS_API_KEY,
-        variables_values: otp,
-        route: 'otp',
-        numbers: normalizedPhone
+    console.log(`\n=== OTP Request Initiated for ${phone} : [ ${otp} ] ===`);
+
+    const authKey = process.env.MSG91_AUTH_KEY;
+    const templateId = process.env.MSG91_TEMPLATE_ID;
+
+    // .env তে ডাটা না থাকলে বা ভুল থাকলে এখানেই আটকে দেবে
+    if (!authKey || !templateId) {
+      console.error("❌ MSG91 Credentials missing in .env! Cannot send real SMS.");
+      return false; 
+    }
+
+    // Phone Number Formatting (must include country code, e.g., 91)
+    let mobileNumber = phone.replace(/\D/g, '');
+    if (mobileNumber.length === 10) mobileNumber = '91' + mobileNumber;
+
+    console.log(`📡 Sending OTP to ${mobileNumber} via MSG91...`);
+
+    // MSG91 OTP API Call
+    const response = await axios.post(
+      'https://control.msg91.com/api/v5/otp',
+      {}, // Body ফাঁকা থাকবে, কারণ OTP param দিয়েই ভ্যালু পাস হচ্ছে
+      {
+        params: {
+          template_id: templateId,
+          mobile: mobileNumber,
+          otp: otp // MSG91 অটোমেটিক আপনার টেমপ্লেটের ##OTP## কে এটা দিয়ে রিপ্লেস করে দেবে
+        },
+        headers: {
+          'authkey': authKey,
+          'Content-Type': 'application/json'
+        }
       }
-    });
+    );
+
+    // MSG91 থেকে সফল উত্তর এসেছে কিনা তা টার্মিনালে দেখাবে
+    console.log("✅ MSG91 API Response:", response.data);
+
+    if (response.data.type === 'error') {
+      console.error("❌ MSG91 Template/Sender Error:", response.data.message);
+      return false;
+    }
+
     return true;
   } catch (error) {
-    console.error("Fast2SMS Error:", error.response?.data || error.message);
-    throw new ApiError(500, "Failed to send OTP via SMS provider");
+    console.error("❌ MSG91 Network/API Error:", error?.response?.data || error.message);
+    return false;
   }
-};
-
-export const verifyOtp = async (phone, otp) => {
-  const normalizedPhone = normalizePhone(phone);
-  const session = await prisma.otpSession.findUnique({ where: { phone: normalizedPhone } });
-
-  if (!session) throw new ApiError(400, "No OTP requested for this number");
-  if (session.otp !== otp) throw new ApiError(400, "Invalid OTP");
-  if (new Date() > session.expiresAt) throw new ApiError(400, "OTP has expired");
-
-  // Delete OTP after successful verification
-  await prisma.otpSession.delete({ where: { phone: normalizedPhone } });
-  
-  return true;
 };
