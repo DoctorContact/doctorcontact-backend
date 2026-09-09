@@ -1,42 +1,34 @@
 import admin from "firebase-admin";
 
-// Firebase Admin is used ONLY to verify ID tokens that the frontend gets
-// back from Firebase Phone Auth (client SDK). The backend never generates
-// or stores OTPs itself — Firebase handles sending/verifying the SMS code.
-//
-// Required env vars (from your Firebase project's service account JSON,
-// Project Settings -> Service Accounts -> Generate new private key):
-//   FIREBASE_PROJECT_ID
-//   FIREBASE_CLIENT_EMAIL
-//   FIREBASE_PRIVATE_KEY   (keep the \n escapes if pasted as one line)
-
 if (!admin.apps.length) {
   const projectId = process.env.FIREBASE_PROJECT_ID;
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
+  let privateKey = process.env.FIREBASE_PRIVATE_KEY;
+
+  if (privateKey) {
+    // 1. Remove surrounding quotes jodi thake
+    privateKey = privateKey.replace(/^["']|["']$/g, "");
+    // 2. String '\n' ke actual line break-e convert kora
+    privateKey = privateKey.replace(/\\n/g, "\n");
+  }
 
   if (!projectId || !clientEmail || !privateKey) {
-    // Don't crash the whole server on boot if this isn't configured yet —
-    // just fail loudly the first time someone actually calls the phone-auth
-    // endpoint, so the rest of the API keeps working.
-    console.warn(
-      "[firebase.config] Missing FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY — phone OTP login will fail until these are set."
-    );
+    console.warn("⚠️ Firebase credentials missing in .env");
   } else {
-    admin.initializeApp({
-      credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
-    });
+    try {
+      admin.initializeApp({
+        credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
+      });
+      console.log("🔥 Firebase Admin initialized successfully!");
+    } catch (error) {
+      console.error("❌ Firebase Admin initialization failed:", error.message);
+    }
   }
 }
 
-/**
- * Verifies a Firebase ID token (obtained on the frontend after a successful
- * Phone Auth OTP confirmation) and returns the verified phone number.
- * Throws if the token is invalid/expired or has no phone_number claim.
- */
 export const verifyFirebasePhoneToken = async (idToken) => {
   if (!admin.apps.length) {
-    throw new Error("Firebase Admin is not configured (missing service account env vars)");
+    throw new Error("Firebase Admin is not configured");
   }
 
   const decoded = await admin.auth().verifyIdToken(idToken);
@@ -45,7 +37,7 @@ export const verifyFirebasePhoneToken = async (idToken) => {
     throw new Error("This Firebase token has no verified phone number");
   }
 
-  return decoded.phone_number; // E.164 format, e.g. +919876543210
+  return decoded.phone_number;
 };
 
 export default admin;

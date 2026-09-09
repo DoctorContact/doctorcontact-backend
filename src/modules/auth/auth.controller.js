@@ -83,12 +83,17 @@ export const login = asyncHandler(async (req, res) => {
 });
 
 // ==================== PATIENT PHONE/OTP LOGIN (& SIGNUP) ====================
-
 export const patientPhoneAuth = asyncHandler(async (req, res) => {
-  const data = patientPhoneAuthSchema.parse(req.body);
+  // Needs idToken and optional name
+  const { idToken, name } = req.body;
 
+  if (!idToken) {
+    throw new ApiError(400, "Firebase idToken is required");
+  }
+
+  // Calls authService which handles Firebase token verification
   const { user, accessToken, refreshToken, isNewAccount } =
-    await authService.patientPhoneAuth(data);
+    await authService.patientPhoneAuth({ idToken, name });
 
   res.cookie("refreshToken", refreshToken, COOKIE_OPTIONS);
 
@@ -179,19 +184,18 @@ export const resetPassword = asyncHandler(async (req, res) => {
 
 // ==================== RESET PASSWORD (PHONE) ====================
 
-export const resetPasswordByPhone = asyncHandler(async (req, res) => {
-  const { phone, otp, newPassword } = req.body;
+// Reset Password by Phone update koro
+export const resetPasswordByPhone = async ({ idToken, newPassword }) => {
+  const phone = normalizePhone(await verifyFirebasePhoneToken(idToken));
 
-  const storedOtp = await redisClient.get(`OTP:${phone}`);
-  if (!storedOtp || storedOtp !== otp) {
-    throw new ApiError(400, "Invalid or expired OTP");
-  }
-  await redisClient.del(`OTP:${phone}`);
+  const user = await findUserByPhone(phone);
+  if (!user) throw new ApiError(404, "No account found with this phone number");
+  if (user.role === "PATIENT") throw new ApiError(400, "Patients don't have passwords");
+  if (!user.selfRegistered) throw new ApiError(403, "Cannot self-reset password");
 
-  await authService.resetPasswordByPhone({ phone, newPassword });
-
-  res.status(200).json(new ApiResponse(true, "Password reset successfully"));
-});
+  const hashedPassword = await hashPassword(newPassword);
+  await updateUserPassword(user.id, hashedPassword);
+};
 
 // ==================== GET CURRENT USER ====================
 

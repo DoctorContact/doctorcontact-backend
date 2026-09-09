@@ -18,5 +18,6 @@ router.post("/reset-password", otpLimiter, authController.resetPassword);
 router.post("/reset-password/phone", otpLimiter, authController.resetPasswordByPhone);
 router.post("/logout", authMiddleware, authController.logout);
 router.get("/me", authMiddleware, authController.getMe);
+router.post("/patient/phone", authLimiter, authController.patientPhoneAuth);
 
 export default router;

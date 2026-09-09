@@ -20,7 +20,10 @@ import {
   verifyRefreshToken,
 } from "../../utils/tokenGenerator.js";
 import { OTP_EXPIRY_SECONDS, OTP_PREFIX } from "./auth.constants.js";
-import { sendEmail } from "../../utils/emailService.js";
+import { sendEmail } from "../../utils/emailService.js"
+import { verifyFirebasePhoneToken } from "../../config/firebase.config.js";
+
+
 
 export const registerUser = async ({ name, email, password, phone, dob }) => {
   const existingUser = await findUserByEmail(email);
@@ -62,25 +65,33 @@ export const loginUser = async ({ email, phone, password }) => {
   return { user: sanitizeUser(user), ...tokens };
 };
 
-export const patientPhoneAuth = async ({ phone, name }) => {
-  const normalizedPhone = normalizePhone(phone);
-  let user = await findUserByPhone(normalizedPhone);
+// patientPhoneAuth function update koro
+export const patientPhoneAuth = async ({ idToken, name }) => {
+  // 1. Firebase theke idToken verify kore phone number ber kora
+  const rawPhone = await verifyFirebasePhoneToken(idToken); 
+  const phone = normalizePhone(rawPhone);
+
+  // 2. Existing user check kora
+  let user = await findUserByPhone(phone);
 
   if (user) {
-    if (user.role !== "PATIENT") throw new ApiError(409, "Phone number registered to another account type");
-    if (!user.isActive) throw new ApiError(403, "Account deactivated");
+    if (user.role !== "PATIENT") {
+      throw new ApiError(409, "This phone number is already registered as a different type of account");
+    }
+    if (!user.isActive) throw new ApiError(403, "Your account has been deactivated");
     if (!user.isVerified) user = await markUserVerified(user.id);
 
     const tokens = await issueTokens(user);
     return { user: sanitizeUser(user), ...tokens, isNewAccount: false };
   }
 
-  const existingPatient = await findPatientByPhone(normalizedPhone);
+  // 3. Notun user toiri kora
+  const existingPatient = await findPatientByPhone(phone);
   const guestPatientId = existingPatient && !existingPatient.userId ? existingPatient.id : null;
 
   if (!name) throw new ApiError(400, "Name is required to create a new account");
 
-  user = await createPhoneVerifiedPatient({ phone: normalizedPhone, name, guestPatientId });
+  user = await createPhoneVerifiedPatient({ phone, name, guestPatientId });
   const tokens = await issueTokens(user);
   return { user: sanitizeUser(user), ...tokens, isNewAccount: true };
 };
