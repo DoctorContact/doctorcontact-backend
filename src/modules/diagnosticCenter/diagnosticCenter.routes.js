@@ -6,12 +6,20 @@ import upload from "../../middlewares/upload.middleware.js";
 
 const router = Router();
 
-// Any authenticated user can browse/search diagnostic centers and view global tests
-router.get("/search", authMiddleware, centerController.searchByName);
-router.get("/all", authMiddleware, centerController.listAllApprovedCenters);
-router.get("/global-tests", authMiddleware, centerController.getGlobalTests); // NEW
+// === 1. PUBLIC ROUTES (No Auth Required) ===
+router.get("/all", centerController.listAllApprovedCenters);
+router.get("/public/:id", centerController.getPublicCenterDetails);
 
-// DIAGNOSTIC_STAFF portal: own profile + parent center
+// === 2. SUPER ADMIN ROUTES (Must be placed before DIAGNOSTIC_CENTER global middleware) ===
+router.post("/admin/global-tests", authMiddleware, roleMiddleware("SUPER_ADMIN"), centerController.adminAddGlobalTest);
+router.patch("/admin/global-tests/:id", authMiddleware, roleMiddleware("SUPER_ADMIN"), centerController.adminUpdateGlobalTest);
+router.delete("/admin/global-tests/:id", authMiddleware, roleMiddleware("SUPER_ADMIN"), centerController.adminDeleteGlobalTest);
+
+// === 3. GENERAL AUTHENTICATED ROUTES ===
+router.get("/search", authMiddleware, centerController.searchByName);
+router.get("/global-tests", authMiddleware, centerController.getGlobalTests); 
+
+// === 4. DIAGNOSTIC STAFF ROUTES ===
 router.get(
   "/staff/me",
   authMiddleware,
@@ -19,7 +27,12 @@ router.get(
   centerController.getMyStaffProfile
 );
 
+// === 5. DIAGNOSTIC CENTER (Lab Manager) ROUTES ===
+// 🟢 নিচের লাইনের পর থেকে সবকিছু শুধু ল্যাব ম্যানেজার অ্যাক্সেস পাবে
 router.use(authMiddleware, roleMiddleware("DIAGNOSTIC_CENTER"));
+
+router.get("/working-hours", centerController.getCenterWorkingHoursController);
+router.put("/working-hours", centerController.updateWorkingHours);
 
 router.get("/profile", centerController.getMyProfile);
 router.patch("/profile", centerController.updateMyProfile);
@@ -30,7 +43,6 @@ router.patch("/staff/change-password", centerController.changeStaffPassword);
 
 router.post("/logo", upload.single("photo"), centerController.uploadLogo);
 
-// === NEW: Step 26 Diagnostic Tests Routes ===
 router.get("/tests", centerController.getMyTests);
 router.post("/tests", centerController.addCenterTest);
 router.patch("/tests/:testId", centerController.updateCenterTest);

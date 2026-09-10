@@ -52,14 +52,15 @@ export const createClinicSchema = z
 
 export const createDiagnosticCenterSchema = z.object({
   name: z.string().min(2, "Name is required"),
-  email: z.string().email("Invalid email"),
+  email: z.string().email("Invalid email format"),
   password: z.string().min(6, "Password must be at least 6 characters"),
-  phone: z.string().min(10, "Phone number is required"),
+  phone: z.string().optional(),
   centerName: z.string().min(2, "Center name is required"),
   address: z.string().optional(),
   city: z.string().optional(),
   state: z.string().optional(),
   pincode: z.string().optional(),
+  hasHomeService: z.boolean().optional(), // 🟢 নতুন ফিল্ড
 });
 
 // Admin onboards a doctor. clinicId is intentionally OPTIONAL — an Admin can

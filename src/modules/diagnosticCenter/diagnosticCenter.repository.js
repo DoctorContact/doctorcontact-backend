@@ -56,14 +56,13 @@ export const searchCentersByName = (name) => {
       isApproved: true,
       centerName: { contains: name, mode: "insensitive" },
     },
-    select: { id: true, centerName: true, city: true, address: true, logo: true },
   });
 };
 
+// 🟢 Updated: Removed select to fetch all fields including hasHomeService
 export const searchAllApprovedCenters = () => {
   return prisma.diagnosticCenter.findMany({
     where: { isApproved: true },
-    select: { id: true, centerName: true, city: true, address: true, logo: true },
   });
 };
 
@@ -78,8 +77,8 @@ export const getActiveGlobalTests = () => {
 export const getCenterTests = (diagnosticCenterId) => {
   return prisma.centerTest.findMany({
     where: { diagnosticCenterId },
-    include: { test: true },
-    orderBy: { test: { name: "asc" } },
+    include: { diagnosticTest: true }, 
+    orderBy: { diagnosticTest: { name: "asc" } }, 
   });
 };
 
@@ -96,7 +95,7 @@ export const findCenterTestByCenterAndTest = (diagnosticCenterId, testId) => {
 export const addTestToCenter = (data) => {
   return prisma.centerTest.create({
     data,
-    include: { test: true },
+    include: { diagnosticTest: true }, 
   });
 };
 
@@ -104,12 +103,56 @@ export const updateCenterTest = (id, data) => {
   return prisma.centerTest.update({
     where: { id },
     data,
-    include: { test: true },
+    include: { diagnosticTest: true }, 
   });
 };
 
 export const removeCenterTest = (id) => {
   return prisma.centerTest.delete({
     where: { id },
+  });
+};
+
+// ==========================================
+// ADMIN: Global Test Management
+// ==========================================
+export const createGlobalTest = (data) => {
+  return prisma.diagnosticTest.create({ data });
+};
+
+export const editGlobalTest = (id, data) => {
+  return prisma.diagnosticTest.update({ where: { id }, data });
+};
+
+export const deleteGlobalTest = (id) => {
+  return prisma.diagnosticTest.delete({ where: { id } });
+};
+
+// ==========================================
+// LAB: Working Hours Management
+// ==========================================
+export const upsertWorkingHours = (diagnosticCenterId, hoursData) => {
+  return prisma.$transaction(
+    hoursData.map((hour) =>
+      prisma.diagnosticCenterWorkingHours.upsert({
+        where: {
+          diagnosticCenterId_dayOfWeek: { diagnosticCenterId, dayOfWeek: hour.dayOfWeek },
+        },
+        update: { openTime: hour.openTime, closeTime: hour.closeTime, isClosed: hour.isClosed },
+        create: { 
+          diagnosticCenterId, 
+          dayOfWeek: hour.dayOfWeek, 
+          openTime: hour.openTime, 
+          closeTime: hour.closeTime, 
+          isClosed: hour.isClosed 
+        },
+      })
+    )
+  );
+};
+
+export const getWorkingHours = (diagnosticCenterId) => {
+  return prisma.diagnosticCenterWorkingHours.findMany({
+    where: { diagnosticCenterId }
   });
 };

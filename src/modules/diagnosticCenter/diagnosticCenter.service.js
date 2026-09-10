@@ -22,6 +22,10 @@ import {
   removeCenterTest,
 } from "./diagnosticCenter.repository.js";
 
+import { 
+  createGlobalTest, editGlobalTest, deleteGlobalTest, 
+  upsertWorkingHours, getWorkingHours 
+} from "./diagnosticCenter.repository.js";
 
 export const getMyProfile = async (userId) => {
   const center = await findCenterByUserId(userId);
@@ -152,4 +156,37 @@ export const removeCenterTestConfig = async (userId, centerTestId) => {
 
   await removeCenterTest(centerTestId);
   return { deleted: true };
+};
+
+// Admin Services
+export const addGlobalTest = async (data) => {
+  // ডাটাবেসে চেক করা হচ্ছে একই নামের টেস্ট আছে কিনা
+  const existing = await prisma.diagnosticTest.findUnique({ where: { name: data.name } });
+  if (existing) {
+    throw new ApiError(409, "A test with this name already exists.");
+  }
+  return createGlobalTest(data);
+};
+export const updateGlobalTest = async (id, data) => {
+  if (data.name) {
+    const existing = await prisma.diagnosticTest.findUnique({ where: { name: data.name } });
+    if (existing && existing.id !== id) {
+      throw new ApiError(409, "A test with this name already exists.");
+    }
+  }
+  return editGlobalTest(id, data);
+};
+export const removeGlobalTest = async (id) => deleteGlobalTest(id);
+
+// Lab Services
+export const updateCenterWorkingHours = async (userId, hoursData) => {
+  const center = await findCenterByUserId(userId);
+  if (!center) throw new ApiError(404, "Center not found");
+  return upsertWorkingHours(center.id, hoursData);
+};
+
+export const getCenterWorkingHours = async (userId) => {
+  const center = await findCenterByUserId(userId);
+  if (!center) throw new ApiError(404, "Center not found");
+  return getWorkingHours(center.id);
 };

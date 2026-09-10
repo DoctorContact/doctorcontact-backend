@@ -12,6 +12,7 @@ export const updateCenterProfileSchema = z.object({
   googleMapsUrl: z.string().url("Must be a valid URL").optional().or(z.literal("")),
   latitude: z.number().optional(),
   longitude: z.number().optional(),
+  hasHomeService: z.boolean().optional(),
 });
 
 export const createStaffSchema = z.object({

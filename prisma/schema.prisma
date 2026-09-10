@@ -391,23 +391,31 @@ model DiagnosticCenter {
   city              String?
   state             String?
   pincode           String?
+  
+  // Map Data
   latitude          Float?
   longitude         Float?
+  googleMapsUrl     String?
+
   logo              String?
   isApproved        Boolean                 @default(false)
   createdAt         DateTime                @default(now())
   updatedAt         DateTime                @updatedAt
   
-  // New fields
+  // Contact & Status (New fields)
   phone             String?
   whatsapp          String?
-  googleMapsUrl     String?
+  isOnline          Boolean                 @default(true) // ল্যাব অনলাইন কি না
+  authorizationNote String?                 // যেমন: "আমরা লালবাবা থেকে করাই"
+  hasHomeService    Boolean  @default(false)
 
   // Relations
   staff             DiagnosticCenterStaff[]
   user              User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
   incomingReferrals TestReferral[]
-  availableTests    CenterTest[]            // <--- This is the missing line
+  availableTests    CenterTest[]            // ল্যাবের নিজস্ব টেস্ট লিস্ট
+  workingHours      DiagnosticCenterWorkingHours[]
+  
 
   @@map("diagnostic_centers")
 }
@@ -660,15 +668,18 @@ model DiagnosticTest {
 model CenterTest {
   id                 String           @id @default(uuid())
   diagnosticCenterId String
-  testId             String
-  price              Float?
+  diagnosticCenter   DiagnosticCenter @relation(fields: [diagnosticCenterId], references: [id], onDelete: Cascade)
+  
+  testId             String           // গ্লোবাল DiagnosticTest এর আইডি
+  diagnosticTest     DiagnosticTest   @relation(fields: [testId], references: [id], onDelete: Cascade)
+  
+  price              Float            // ল্যাব নিজেদের যে দাম সেট করবে
   isAvailable        Boolean          @default(true)
+  
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
-  diagnosticCenter   DiagnosticCenter @relation(fields: [diagnosticCenterId], references: [id], onDelete: Cascade)
-  test               DiagnosticTest   @relation(fields: [testId], references: [id], onDelete: Cascade)
 
-  @@unique([diagnosticCenterId, testId])
+  @@unique([diagnosticCenterId, testId]) // যাতে একই টেস্ট দু'বার অ্যাড না হয়
   @@map("center_tests")
 }
 
@@ -739,6 +750,22 @@ model DoctorDailyStatus {
 
   @@unique([doctorId, clinicId, date])
   @@map("doctor_daily_status")
+}
+
+model DiagnosticCenterWorkingHours {
+  id                 String           @id @default(uuid())
+  diagnosticCenterId String
+  dayOfWeek          DayOfWeek
+  openTime           String?          // e.g., "09:00"
+  closeTime          String?          // e.g., "17:00"
+  isClosed           Boolean          @default(false)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  
+  diagnosticCenter   DiagnosticCenter @relation(fields: [diagnosticCenterId], references: [id], onDelete: Cascade)
+
+  @@unique([diagnosticCenterId, dayOfWeek])
+  @@map("diagnostic_center_working_hours")
 }
 
 enum DoctorOperationalStatus {
