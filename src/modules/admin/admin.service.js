@@ -16,7 +16,9 @@ import {
   updatePlatformSettings,
   findAllClinics,
   countClinics,
- updateClinicByAdmin, softDeleteClinic, findClinicByIdRaw,
+  updateClinicByAdmin, 
+  softDeleteClinic, 
+  findClinicByIdRaw,
   setClinicApproval,
   findAllDoctorsUnverified,
   findDoctorByIdRaw,
@@ -131,10 +133,6 @@ export const getStats = async () => {
   return getPlatformStats();
 };
 
-// ----------------------------------------------------------------------
-// User Creation Methods
-// ----------------------------------------------------------------------
-
 export const createAdmin = async ({ name, email, password, phone }) => {
   if (email && (await findUserByEmail(email))) {
     throw new ApiError(409, "A user with this email already exists");
@@ -235,7 +233,6 @@ export const createClinic = async ({ name, email, password, phone, clinicName, a
     return { user: safeUser, clinic: finalClinic };
     
   } catch (error) {
-    // Catch unique constraint failed error for Phone
     if (error.code === 'P2002' && error.meta?.target?.includes('phone')) {
       throw new ApiError(409, "This phone number is already registered.");
     }
@@ -243,7 +240,12 @@ export const createClinic = async ({ name, email, password, phone, clinicName, a
   }
 };
 
-export const createDiagnosticCenter = async ({ name, email, password, phone, centerName, address, city, state, pincode }) => {
+// 🟢 Diagnostic Center creation logic updated to include new fields
+export const createDiagnosticCenter = async ({ 
+  name, email, password, phone, centerName, 
+  address, city, state, pincode, 
+  whatsapp, googleMapsUrl, hasHomeService 
+}) => {
   const existing = await findUserByEmail(email);
   if (existing) throw new ApiError(409, "A user with this email already exists");
 
@@ -256,8 +258,11 @@ export const createDiagnosticCenter = async ({ name, email, password, phone, cen
     });
 
     let finalCenter = diagnosticCenter;
-    if (address || city || state || pincode) {
-      finalCenter = await updateDiagnosticCenterProfile(diagnosticCenter.id, { address, city, state, pincode });
+    if (address || city || state || pincode || whatsapp || googleMapsUrl || hasHomeService !== undefined) {
+      finalCenter = await updateDiagnosticCenterProfile(diagnosticCenter.id, { 
+        address, city, state, pincode, 
+        phone, whatsapp, googleMapsUrl, hasHomeService 
+      });
     }
 
     const { password: _pw, refreshToken, ...safeUser } = user;
@@ -269,10 +274,6 @@ export const createDiagnosticCenter = async ({ name, email, password, phone, cen
     throw error;
   }
 };
-
-// ----------------------------------------------------------------------
-// Diagnostic Center Methods
-// ----------------------------------------------------------------------
 
 export const listDiagnosticCenters = async ({ isApproved, page, limit }) => {
   return findAllDiagnosticCenters({ isApproved, page, limit });
@@ -290,10 +291,6 @@ export const revokeDiagnosticCenterApproval = async (id) => {
   if (!center) throw new ApiError(404, "Diagnostic center not found");
   return setDiagnosticCenterApproval(id, false);
 };
-
-// ----------------------------------------------------------------------
-// Featured Doctors Methods
-// ----------------------------------------------------------------------
 
 export const setDoctorFeaturedStatus = async (doctorId, isFeatured, featuredOrder) => {
   const doctor = await findDoctorByIdRaw(doctorId);

@@ -25,8 +25,6 @@ export const updateSettingsSchema = z.object({
   bookingWindowMinutes: z.number().int().positive("Must be a positive number of minutes"),
 });
 
-// superadmin create admin
-
 export const createAdminSchema = z
   .object({
     name: z.string().min(2, "Name is required"),
@@ -60,11 +58,12 @@ export const createDiagnosticCenterSchema = z.object({
   city: z.string().optional(),
   state: z.string().optional(),
   pincode: z.string().optional(),
-  hasHomeService: z.boolean().optional(), // 🟢 নতুন ফিল্ড
+  // 🟢 New fields integrated
+  whatsapp: z.string().optional(),
+  googleMapsUrl: z.string().url("Must be a valid URL").optional().or(z.literal("")),
+  hasHomeService: z.boolean().optional(), 
 });
 
-// Admin onboards a doctor. clinicId is intentionally OPTIONAL — an Admin can
-// add a doctor who is not attached to any clinic yet.
 export const createDoctorSchema = z
   .object({
     name: z.string().min(2, "Name is required"),

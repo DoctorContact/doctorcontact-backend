@@ -6,13 +6,13 @@ export const updateCenterProfileSchema = z.object({
   city: z.string().optional(),
   state: z.string().optional(),
   pincode: z.string().optional(),
-  // === NEW: Step 25 Location & Contact Fields ===
   phone: z.string().optional(),
   whatsapp: z.string().optional(),
   googleMapsUrl: z.string().url("Must be a valid URL").optional().or(z.literal("")),
   latitude: z.number().optional(),
   longitude: z.number().optional(),
   hasHomeService: z.boolean().optional(),
+  authorizationNote: z.string().optional(), // 🟢 Included Authorization Note
 });
 
 export const createStaffSchema = z.object({
@@ -27,7 +27,6 @@ export const changeStaffPasswordSchema = z.object({
   newPassword: z.string().min(6, "Password must be at least 6 characters"),
 });
 
-// === NEW: Step 26 Diagnostic Tests Validation ===
 export const addCenterTestSchema = z.object({
   testId: z.string().uuid("Invalid Test ID"),
   price: z.number().nonnegative("Price cannot be negative").optional(),

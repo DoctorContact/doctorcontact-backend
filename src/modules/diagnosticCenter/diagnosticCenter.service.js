@@ -33,7 +33,6 @@ export const getMyProfile = async (userId) => {
   return center;
 };
 
-// DIAGNOSTIC_STAFF: their own profile + the center they belong to.
 export const getStaffProfile = async (userId) => {
   const staff = await findStaffByUserId(userId);
   if (!staff) throw new ApiError(404, "Staff profile not found");
@@ -43,6 +42,9 @@ export const getStaffProfile = async (userId) => {
 export const updateMyProfile = async (userId, data) => {
   const center = await findCenterByUserId(userId);
   if (!center) throw new ApiError(404, "Diagnostic center profile not found");
+  
+  // The repository layer will smoothly update all fields (including hasHomeService, whatsapp, etc.) 
+  // passed through the validation schema.
   return updateCenterProfile(center.id, data);
 };
 
@@ -158,15 +160,14 @@ export const removeCenterTestConfig = async (userId, centerTestId) => {
   return { deleted: true };
 };
 
-// Admin Services
 export const addGlobalTest = async (data) => {
-  // ডাটাবেসে চেক করা হচ্ছে একই নামের টেস্ট আছে কিনা
   const existing = await prisma.diagnosticTest.findUnique({ where: { name: data.name } });
   if (existing) {
     throw new ApiError(409, "A test with this name already exists.");
   }
   return createGlobalTest(data);
 };
+
 export const updateGlobalTest = async (id, data) => {
   if (data.name) {
     const existing = await prisma.diagnosticTest.findUnique({ where: { name: data.name } });
@@ -176,9 +177,9 @@ export const updateGlobalTest = async (id, data) => {
   }
   return editGlobalTest(id, data);
 };
+
 export const removeGlobalTest = async (id) => deleteGlobalTest(id);
 
-// Lab Services
 export const updateCenterWorkingHours = async (userId, hoursData) => {
   const center = await findCenterByUserId(userId);
   if (!center) throw new ApiError(404, "Center not found");
