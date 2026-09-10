@@ -59,7 +59,6 @@ export const searchCentersByName = (name) => {
   });
 };
 
-// 🟢 Updated: Removed select to fetch all fields including hasHomeService
 export const searchAllApprovedCenters = () => {
   return prisma.diagnosticCenter.findMany({
     where: { isApproved: true },
@@ -73,7 +72,6 @@ export const getActiveGlobalTests = () => {
   });
 };
 
-// Fetch tests specific to a center (with pricing and availability)
 export const getCenterTests = (diagnosticCenterId) => {
   return prisma.centerTest.findMany({
     where: { diagnosticCenterId },
@@ -116,6 +114,10 @@ export const removeCenterTest = (id) => {
 // ==========================================
 // ADMIN: Global Test Management
 // ==========================================
+export const findGlobalTestByName = (name) => {
+  return prisma.diagnosticTest.findUnique({ where: { name } });
+};
+
 export const createGlobalTest = (data) => {
   return prisma.diagnosticTest.create({ data });
 };
