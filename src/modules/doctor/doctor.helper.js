@@ -7,6 +7,51 @@ export const getTodayISTDate = () => {
   return new Date(dateString); // Returns UTC midnight of the local date
 };
 
+// Single source of truth for "what is today's date string in IST" and
+// "what time is it right now in IST" (HH:mm, 24h) — the availability engine
+// and the schedule-management endpoints both need these and must never
+// drift apart on timezone handling.
+export const getTodayISTDateString = () => {
+  const timeZone = "Asia/Kolkata";
+  return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+};
+
+export const getCurrentISTTime = () => {
+  const timeZone = "Asia/Kolkata";
+  return new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date());
+};
+
+// Normalizes anything the frontend might send (a bare "YYYY-MM-DD", a full
+// ISO timestamp, or a Date) into a plain "YYYY-MM-DD" IST calendar-date
+// string. Moved here (from a controller-local copy) so every module that
+// needs to reason about "which calendar date is this" agrees on the answer.
+export const toISTDateString = (dateVal) => {
+  if (!dateVal) return dateVal;
+
+  if (typeof dateVal === "string" && dateVal.length === 10 && !dateVal.includes("T")) {
+    return dateVal;
+  }
+
+  const rawDate = new Date(dateVal);
+  const istDateStr = rawDate.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
+  const localDate = new Date(istDateStr);
+
+  const year = localDate.getFullYear();
+  const month = String(localDate.getMonth() + 1).padStart(2, "0");
+  const day = String(localDate.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+};
+
+// Adds `days` calendar days to a "YYYY-MM-DD" string, returning another
+// "YYYY-MM-DD" string. Pure UTC arithmetic on the calendar date only — no
+// timezone conversion needed since we're just walking the calendar.
+export const addDaysToDateString = (dateString, days) => {
+  const [y, m, d] = dateString.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + days));
+  return dt.toISOString().slice(0, 10);
+};
+
 export const evaluateDoctorStatus = (doctor) => {
   const now = new Date();
   const timeZone = "Asia/Kolkata";

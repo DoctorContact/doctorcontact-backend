@@ -3,6 +3,8 @@ import asyncHandler from "../../utils/asyncHandler.js";
 import ApiResponse from "../../utils/apiResponse.js";
 import ApiError from "../../utils/apiError.js";
 import * as doctorService from "./doctor.service.js";
+import { getDayAvailability, getUpcomingAvailableDates, getClinicsWithAvailabilityForDoctor } from "./availability.service.js";
+import { toISTDateString as sharedToISTDateString } from "./doctor.helper.js";
 import {
   searchDoctorsByNameSchema,
   sendRequestToDoctorSchema,
@@ -20,27 +22,10 @@ import {
 // ==========================================
 // 🛑 ULTIMATE TIMEZONE FIXER (IST - INDIA)
 // ==========================================
-// This forces any date sent by the frontend into exact Indian Standard Time (YYYY-MM-DD)
-const toISTDateString = (dateVal) => {
-  if (!dateVal) return dateVal;
-  
-  // If frontend sent a strict pure string like "2026-09-12" without "Z" or time, keep it.
-  if (typeof dateVal === 'string' && dateVal.length === 10 && !dateVal.includes("T")) {
-    return dateVal;
-  }
-
-  const rawDate = new Date(dateVal);
-  // Convert UTC timestamp to IST local string
-  const istDateStr = rawDate.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
-  const localDate = new Date(istDateStr);
-  
-  // Return perfect YYYY-MM-DD
-  const year = localDate.getFullYear();
-  const month = String(localDate.getMonth() + 1).padStart(2, '0');
-  const day = String(localDate.getDate()).padStart(2, '0');
-  
-  return `${year}-${month}-${day}`;
-};
+// This used to be a controller-local copy of the same logic that also lived
+// in availability.service.js — now both import the single implementation
+// from doctor.helper.js so date parsing can never silently diverge again.
+const toISTDateString = sharedToISTDateString;
 
 // ==========================================
 // DOCTOR PROFILE & ASSOCIATION
@@ -286,114 +271,74 @@ export const getSchedules = asyncHandler(async (req, res) => {
   const { doctorId, clinicId } = req.params;
   const { date } = req.query;
 
-  const allSchedules = await doctorService.listSchedules(doctorId, clinicId);
-  const activeSchedules = allSchedules.filter((s) => s.isActive);
-
   if (!date) {
+    // No date given => this is the raw schedule-management view (doctor/clinic
+    // editing their recurring sessions), not a booking-availability query.
+    // Kept exactly as before: all active schedule definitions, no date math.
+    const allSchedules = await doctorService.listSchedules(doctorId, clinicId);
+    const activeSchedules = allSchedules.filter((s) => s.isActive);
     return res.status(200).json(new ApiResponse(true, "Schedules fetched successfully", { schedules: activeSchedules }));
   }
 
-  // 🟢 IST CONVERSION APPLIED TO SEARCH QUERY
-  const targetDateString = toISTDateString(date);
+  // 🟢 Delegates to the single centralized availability engine
+  // (availability.service.js) instead of re-deriving recurrence/holiday/
+  // leave/capacity rules here. This also means a doctor on leave, or a
+  // clinic holiday, now correctly empties this list — previously this
+  // endpoint ignored both and only checked recurrence + raw capacity.
+  const day = await getDayAvailability(doctorId, clinicId, date);
 
-  const [year, month, day] = targetDateString.split("-").map(Number);
+  // Response shape kept 1:1 with the previous version (schedules[].id,
+  // .slotsLeft, .currentBookings, .startTime, .endTime, ...) so existing
+  // frontend consumers (doctors/[id]/page.tsx, ReceptionistBookingModal,
+  // DoctorScheduleManager, clinic/add-patient) don't need to change.
+  const schedules = day.sessions.map((s) => ({
+    id: s.scheduleId,
+    doctorId,
+    clinicId,
+    startTime: s.startTime,
+    endTime: s.endTime,
+    recurrenceType: s.recurrenceType,
+    maxPatients: s.maxPatients,
+    onlineBookingEnabled: s.onlineBookingEnabled,
+    currentBookings: s.bookedCount,
+    slotsLeft: s.slotsLeft,
+    displaySlotTimes: s.displaySlotTimes,
+  }));
 
-  // This Date object is purely used to find the Day of the week in India
-  const targetDate = new Date(year, month - 1, day);
-
-  const dayNames = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
-  const targetDayName = dayNames[targetDate.getDay()];
-  const targetDateNum = targetDate.getDate();
-
-  const getOrdinalData = (d) => {
-    const dateNum = d.getDate();
-    const weekNth = Math.ceil(dateNum / 7);
-    const isLast = (dateNum + 7) > new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
-    return { weekNth, isLast, dayName: dayNames[d.getDay()] };
-  };
-
-  // ScheduleException is now the ONE place "cancel/override this schedule
-  // for one date" lives — recurrencePattern.excludedDates is retired (any
-  // still-stored values are ignored from here on; addSchedule/updateSchedule
-  // migrate them into ScheduleException rows instead of writing new ones).
-  const exceptionsForDate = await doctorService.getExceptionsForSchedulesOnDate(
-    activeSchedules.map((s) => s.id),
-    targetDateString
-  );
-  const exceptionBySchedule = new Map(exceptionsForDate.map((e) => [e.scheduleId, e]));
-
-  const validSchedules = activeSchedules
-    .map((schedule) => {
-      const exception = exceptionBySchedule.get(schedule.id);
-      if (!exception) return schedule;
-      if (exception.isCancelled) return null;
-      return {
-        ...schedule,
-        startTime: exception.overrideStartTime || schedule.startTime,
-        endTime: exception.overrideEndTime || schedule.endTime,
-        maxPatients: exception.overrideMaxPatients ?? schedule.maxPatients,
-      };
-    })
-    .filter((schedule) => {
-      if (!schedule) return false;
-      const type = schedule.recurrenceType;
-      const pattern = schedule.recurrencePattern || {};
-
-      if (type === "SPECIFIC_DATE") {
-        const savedDate = toISTDateString(pattern.exactDate);
-        return savedDate === targetDateString;
-      }
-
-      if (type === "DAILY") return true;
-      if (type === "WEEKLY") return pattern.days && pattern.days.includes(targetDayName);
-      if (type === "MONTHLY_DATE") return pattern.date === targetDateNum;
-
-      if (type === "MONTHLY_WEEKDAY") {
-        const { weekNth, isLast, dayName } = getOrdinalData(targetDate);
-        if (pattern.day !== dayName) return false;
-        if (pattern.isLast && isLast) return true;
-        if (pattern.week === weekNth) return true;
-        return false;
-      }
-
-      return false;
-    });
-
-  // Prisma range boundary (12:00:00 AM IST to 11:59:59 PM IST)
-  // We use string representations mapped back to UTC bounds to ensure Prisma finds it regardless of hosting
-  const startOfDay = new Date(`${targetDateString}T00:00:00.000+05:30`);
-  const endOfDay = new Date(`${targetDateString}T23:59:59.999+05:30`);
-
-  const schedulesWithCapacity = await Promise.all(
-    validSchedules.map(async (schedule) => {
-      const queue = await prisma.queue.findFirst({
-        where: {
-          doctorId,
-          clinicId,
-          scheduleId: schedule.id,
-          date: { gte: startOfDay, lte: endOfDay }
-        }
-      });
-
-      let currentBookings = 0;
-      if (queue) {
-        currentBookings = await prisma.appointment.count({
-          where: {
-            queueId: queue.id,
-            status: { in: ["WAITING", "CHECKED_IN", "COMPLETED"] }
-          }
-        });
-      }
-
-      return {
-        ...schedule,
-        currentBookings,
-        slotsLeft: Math.max(0, schedule.maxPatients - currentBookings)
-      };
+  res.status(200).json(
+    new ApiResponse(true, "Schedules fetched successfully", {
+      schedules,
+      closedReason: day.closedReason, // e.g. CLINIC_HOLIDAY / CLINIC_CLOSED_WEEKLY / DOCTOR_ON_LEAVE — null when open
     })
   );
+});
 
-  res.status(200).json(new ApiResponse(true, "Schedules fetched successfully", { schedules: schedulesWithCapacity }));
+// ==========================================
+// AVAILABILITY ENGINE — public endpoints
+// ==========================================
+
+// GET /doctors/:doctorId/clinics/:clinicId/schedules/available-dates?limit=10
+// Powers the "Today / 13 Sep / 14 Sep / ..." date-strip. Returns only real
+// calendar dates that have at least one bookable session, scanning forward
+// from today and skipping over dates with no availability (holidays,
+// leaves, no matching recurrence, or fully booked).
+export const getAvailableDates = asyncHandler(async (req, res) => {
+  const { doctorId, clinicId } = req.params;
+  const limit = Math.min(parseInt(req.query.limit, 10) || 10, 30);
+
+  const dates = await getUpcomingAvailableDates(doctorId, clinicId, { limit });
+  res.status(200).json(new ApiResponse(true, "Upcoming available dates fetched", { dates }));
+});
+
+// GET /doctors/:doctorId/clinics-with-schedules
+// Powers the Doctor -> Clinic reverse flow: every clinic this doctor has
+// real DoctorSchedule rows at (not just legacy DoctorClinicAssociation
+// requests), each with its own schedules and next available dates, never
+// merged together.
+export const getClinicsWithSchedules = asyncHandler(async (req, res) => {
+  const { doctorId } = req.params;
+  const clinics = await getClinicsWithAvailabilityForDoctor(doctorId);
+  res.status(200).json(new ApiResponse(true, "Doctor's clinics with schedules fetched", { clinics }));
 });
 
 export const getLiveDoctors = asyncHandler(async (req, res) => {

@@ -148,6 +148,19 @@ router.get(
   doctorController.getSchedules
 );
 
+// Centralized availability engine (Clinic -> Doctor and Doctor -> Clinic
+// flows both call these instead of re-deriving recurrence/holiday/leave
+// rules on the frontend or in separate controllers).
+router.get(
+  "/:doctorId/clinics/:clinicId/schedules/available-dates",
+  doctorController.getAvailableDates
+);
+
+router.get(
+  "/:doctorId/clinics-with-schedules",
+  doctorController.getClinicsWithSchedules
+);
+
 router.post(
   "/:doctorId/clinics/:clinicId/schedules",
   authMiddleware,

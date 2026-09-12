@@ -30,6 +30,7 @@ import {
   getDoctorLeaveForDate // <--- ADD THIS HERE
 } from "./appointment.repository.js";
 import { emitQueueUpdate } from "../../sockets/queue.socket.js";
+import { assertScheduleBookableNow } from "../doctor/availability.service.js";
 
 const DAY_NAMES = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
 
@@ -64,6 +65,14 @@ export const bookOnlineAppointment = async (patientUserId, { doctorId, clinicId,
 
   await assertBookableClinic(doctorId, clinicId);
   await assertClinicOperational(clinicId, date, { isOnlineBooking: true }, doctorId);
+
+  // Belt-and-suspenders check against the same centralized availability
+  // engine the date-strip/slot UI reads from — catches the case
+  // assertClinicOperational doesn't: a session for TODAY whose end time has
+  // already passed (schedule + capacity were otherwise fine, but the clock
+  // has moved on). The transaction inside createAppointmentWithToken
+  // remains the final, race-safe capacity check either way.
+  await assertScheduleBookableNow(doctorId, clinicId, scheduleId, date);
 
   return bookAppointmentCore({
     doctorId,

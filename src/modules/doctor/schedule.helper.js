@@ -59,3 +59,70 @@ export const checkScheduleConflict = (candidate, existingSchedules) => {
   }
   return null;
 };
+
+// === CENTRALIZED DATE-MATCHING ENGINE ===
+// This is now the SINGLE place that decides "does this DoctorSchedule run
+// on this particular calendar date?". Previously this exact logic was
+// hand-copied (and slowly drifting apart) in doctor.controller.js
+// (getSchedules), doctor.helper.js (evaluateDoctorStatus), and nowhere at
+// all for future-date lookups. Everything — today's live status, a specific
+// date's sessions, and the "next available dates" scan used by the booking
+// flow — now calls through here so the three can never disagree again.
+
+const DAY_NAMES = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
+
+// Builds the small set of facts about a calendar date (given as "YYYY-MM-DD")
+// that every recurrence type needs to check itself against.
+export const getDateContext = (dateString) => {
+  const [y, m, d] = dateString.split("-").map(Number);
+  // Using Date.UTC keeps this independent of the server's local timezone —
+  // dateString is already an IST calendar date by the time it gets here.
+  const dayIndex = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const weekNth = Math.ceil(d / 7);
+  const isLast = d + 7 > daysInMonth;
+
+  return {
+    dateString,
+    dayName: DAY_NAMES[dayIndex],
+    dayOfMonth: d,
+    weekNth,
+    isLast,
+  };
+};
+
+// Given a schedule (already exception-adjusted by the caller, see
+// applyExceptionToSchedule below) and a dateContext, returns true if that
+// schedule runs on that date.
+export const scheduleMatchesDate = (schedule, dateContext) => {
+  const type = schedule.recurrenceType;
+  const pattern = schedule.recurrencePattern || {};
+
+  if (type === "SPECIFIC_DATE") {
+    const savedDate = String(pattern.exactDate || "").slice(0, 10);
+    return savedDate === dateContext.dateString;
+  }
+  if (type === "DAILY") return true;
+  if (type === "WEEKLY") return Array.isArray(pattern.days) && pattern.days.includes(dateContext.dayName);
+  if (type === "MONTHLY_DATE") return pattern.date === dateContext.dayOfMonth;
+  if (type === "MONTHLY_WEEKDAY") {
+    if (pattern.day !== dateContext.dayName) return false;
+    if (pattern.isLast) return dateContext.isLast;
+    return pattern.week === dateContext.weekNth;
+  }
+  return false; // Unknown recurrence types are safely ignored, never assumed active.
+};
+
+// Applies a one-off ScheduleException (Step 13) to a schedule for a single
+// date: cancels it outright, or overrides start/end/capacity. Returns null
+// if the schedule doesn't run that day because of the exception.
+export const applyExceptionToSchedule = (schedule, exception) => {
+  if (!exception) return schedule;
+  if (exception.isCancelled) return null;
+  return {
+    ...schedule,
+    startTime: exception.overrideStartTime || schedule.startTime,
+    endTime: exception.overrideEndTime || schedule.endTime,
+    maxPatients: exception.overrideMaxPatients ?? schedule.maxPatients,
+  };
+};

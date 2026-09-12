@@ -603,9 +603,42 @@ export const getDoctorProfileWithClinics = async (doctorId, locationCity = null)
     }
   }));
 
+  const knownClinicIds = new Set([doctor.clinicId, ...associatedClinics.map(c => c.id)].filter(Boolean));
+
+  // FIX: DoctorSchedule (the model that actually drives bookable
+  // availability) is a separate doctor<->clinic relationship from
+  // DoctorClinicAssociation (a legacy request/approval record). A doctor
+  // can have real, active schedules at a clinic that never went through
+  // (or has since fallen out of sync with) that association flow — without
+  // this, such a clinic silently never appeared in "Chamber Information" /
+  // the Doctor -> Clinic booking flow at all, even though patients could
+  // book there via the direct clinic page. We add any such clinic here,
+  // additively — nothing above is removed or altered.
+  const scheduleOnlyClinicRows = await prisma.doctorSchedule.findMany({
+    where: {
+      doctorId,
+      isActive: true,
+      clinicId: { notIn: [...knownClinicIds] },
+      ...(locationCity ? { clinic: { city: locationCity } } : {}),
+    },
+    distinct: ["clinicId"],
+    include: { clinic: true },
+  });
+
+  const scheduleOnlyClinics = scheduleOnlyClinicRows.map(s => ({
+    ...s.clinic,
+    isPrimary: false,
+    associationDetails: {
+      // No DoctorClinicAssociation.fee exists for these — fall back to the
+      // doctor's base fee, same fallback the frontend already applies
+      // (`clinic.associationDetails?.fee || doctor.fee`).
+      fee: null,
+    },
+  }));
+
   const allClinics = locationCity && doctor.clinic?.city !== locationCity 
-    ? associatedClinics 
-    : [primaryClinic, ...associatedClinics];
+    ? [...associatedClinics, ...scheduleOnlyClinics]
+    : [primaryClinic, ...associatedClinics, ...scheduleOnlyClinics];
 
   return { ...doctor, allClinics };
 };
