@@ -108,6 +108,62 @@ router.get("/me", authMiddleware, roleMiddleware("PATIENT"), appointmentControll
 
 /**
  * @swagger
+ * /appointments/me/booking-status:
+ *   get:
+ *     summary: (Patient) Active appointment count vs the max-3 cap, and any active post-cancellation booking restriction
+ *     tags: [Appointment]
+ *     responses:
+ *       200: { description: Booking status fetched }
+ */
+router.get("/me/booking-status", authMiddleware, roleMiddleware("PATIENT"), appointmentController.getMyBookingStatus);
+
+/**
+ * @swagger
+ * /appointments/clinic:
+ *   get:
+ *     summary: (Clinic/Receptionist) List all appointments for the caller's OWN clinic, with optional filters
+ *     tags: [Appointment]
+ *     parameters:
+ *       - in: query
+ *         name: doctorId
+ *         schema: { type: string, format: uuid }
+ *       - in: query
+ *         name: status
+ *         schema: { type: string, example: "WAITING,CHECKED_IN" }
+ *       - in: query
+ *         name: date
+ *         schema: { type: string, example: "2026-07-21" }
+ *       - in: query
+ *         name: patientId
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200: { description: Clinic appointments fetched }
+ */
+router.get(
+  "/clinic",
+  authMiddleware,
+  roleMiddleware("CLINIC", "RECEPTIONIST"),
+  appointmentController.getClinicAppointments
+);
+
+/**
+ * @swagger
+ * /appointments/{appointmentId}/live:
+ *   get:
+ *     summary: Live queue view for a single appointment (current token, patient's token, patients ahead, estimated wait) — fetch on open, then keep live via Socket.io
+ *     tags: [Appointment]
+ *     parameters:
+ *       - in: path
+ *         name: appointmentId
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200: { description: Live queue status fetched }
+ */
+router.get("/:appointmentId/live", authMiddleware, appointmentController.getAppointmentLiveView);
+
+/**
+ * @swagger
  * /appointments/{appointmentId}/cancel:
  *   patch:
  *     summary: Cancel an appointment (Patient can cancel own if WAITING; Receptionist/Clinic/Admin can cancel any at their scope)

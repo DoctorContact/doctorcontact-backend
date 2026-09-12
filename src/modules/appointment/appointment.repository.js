@@ -1,5 +1,6 @@
 import prisma from "../../config/db.config.js";
 import ApiError from "../../utils/apiError.js";
+import { MAX_ACTIVE_APPOINTMENTS } from "./appointment.constants.js";
 
 export const searchDoctors = async ({ q, doctorName, clinicName, clinicId, city, date }) => {
   const where = {
@@ -203,6 +204,21 @@ export const createAppointmentWithToken = async ({ doctorId, clinicId, patientId
       throw new ApiError(409, `This session is full (Capacity: ${maxCapacity}/${maxCapacity}). Please select another session.`);
     }
 
+    // Part 5/6: re-check the patient's active-appointment cap INSIDE the same
+    // serializable transaction as the capacity check above. The service-layer
+    // check before this transaction is a fast-fail for the normal case; this
+    // one closes the race where two booking requests for the same patient
+    // pass that check concurrently.
+    const patientActiveCount = await tx.appointment.count({
+      where: { patientId, status: { in: ["WAITING", "CHECKED_IN"] } },
+    });
+    if (patientActiveCount >= MAX_ACTIVE_APPOINTMENTS) {
+      throw new ApiError(
+        409,
+        `You already have ${patientActiveCount} active upcoming appointments — the maximum allowed is ${MAX_ACTIVE_APPOINTMENTS}.`
+      );
+    }
+
     // === QUEUE/SERIAL GENERATION (STEP 11) ===
     const newToken = queue.lastTokenIssued + 1;
 
@@ -298,6 +314,21 @@ export const findAppointmentByIdFull = (id) => {
   });
 };
 
+// Part 13/21: everything needed to render a single appointment's live-queue
+// card in one query — the appointment itself, its queue (current token,
+// status), and the doctor/clinic names.
+export const findAppointmentForLiveView = (id) => {
+  return prisma.appointment.findUnique({
+    where: { id },
+    include: {
+      patient: { select: { id: true, userId: true, name: true } },
+      doctor: { include: { user: { select: { name: true } } } },
+      clinic: { select: { id: true, clinicName: true } },
+      queue: { include: { schedule: true } },
+    },
+  });
+};
+
 export const cancelAppointmentRecord = (id, { cancelReason, cancelledBy }) => {
   return prisma.appointment.update({
     where: { id },
@@ -308,6 +339,71 @@ export const cancelAppointmentRecord = (id, { cancelReason, cancelledBy }) => {
 export const getDoctorLeaveForDate = (doctorId, clinicId, date) => {
   return prisma.doctorLeave.findUnique({
     where: { doctorId_clinicId_date: { doctorId, clinicId, date: new Date(date) } },
+  });
+};
+
+// Part 5/6: count this patient's currently ACTIVE (not completed/cancelled/
+// absent) appointments. Only WAITING/CHECKED_IN count toward the cap.
+export const countActiveAppointmentsForPatient = (patientId) => {
+  return prisma.appointment.count({
+    where: { patientId, status: { in: ["WAITING", "CHECKED_IN"] } },
+  });
+};
+
+export const getPatientRestrictionStatus = (patientId) => {
+  return prisma.patient.findUnique({
+    where: { id: patientId },
+    select: { id: true, bookingRestrictedUntil: true },
+  });
+};
+
+export const setPatientBookingRestriction = (patientId, restrictedUntil) => {
+  return prisma.patient.update({
+    where: { id: patientId },
+    data: { bookingRestrictedUntil: restrictedUntil },
+  });
+};
+
+// Part 14: number of ACTIVE (WAITING/CHECKED_IN) tokens strictly between the
+// queue's current token and this patient's token — this is the correct
+// "patients ahead" count, excluding cancelled/absent/completed tokens that
+// happen to fall in that numeric range.
+export const countActiveTokensAhead = (queueId, currentToken, patientToken) => {
+  if (patientToken <= currentToken) return Promise.resolve(0);
+  return prisma.appointment.count({
+    where: {
+      queueId,
+      token: { gt: currentToken, lt: patientToken },
+      status: { in: ["WAITING", "CHECKED_IN"] },
+    },
+  });
+};
+
+// Part 10/11: all appointments belonging to ONE clinic, with optional
+// filters. clinicId is always required and always comes from the
+// authenticated user's own clinic — callers must never accept it from the
+// request body/query for a different clinic (see clinic isolation checks
+// in appointment.service.js).
+export const findAppointmentsForClinic = (clinicId, { doctorId, status, date, patientId, from, to } = {}) => {
+  const where = { clinicId };
+  if (doctorId) where.doctorId = doctorId;
+  if (patientId) where.patientId = patientId;
+  if (status) where.status = Array.isArray(status) ? { in: status } : status;
+  if (date) where.date = new Date(date);
+  else if (from || to) {
+    where.date = {};
+    if (from) where.date.gte = new Date(from);
+    if (to) where.date.lte = new Date(to);
+  }
+
+  return prisma.appointment.findMany({
+    where,
+    include: {
+      doctor: { include: { user: { select: { name: true } } } },
+      patient: { include: { user: { select: { name: true, phone: true } } } },
+      queue: { select: { id: true, currentToken: true, status: true, scheduleId: true } },
+    },
+    orderBy: [{ date: "desc" }, { token: "asc" }],
   });
 };
 

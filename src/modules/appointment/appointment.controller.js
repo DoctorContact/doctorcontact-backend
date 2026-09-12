@@ -33,6 +33,29 @@ export const getMyAppointments = asyncHandler(async (req, res) => {
   res.status(200).json(new ApiResponse(true, "Appointments fetched", { appointments }));
 });
 
+export const getMyBookingStatus = asyncHandler(async (req, res) => {
+  const status = await appointmentService.getMyBookingStatus(req.user.id);
+  res.status(200).json(new ApiResponse(true, "Booking status fetched", status));
+});
+
+export const getAppointmentLiveView = asyncHandler(async (req, res) => {
+  const view = await appointmentService.getAppointmentLiveView(req.user, req.params.appointmentId);
+  res.status(200).json(new ApiResponse(true, "Live queue status fetched", view));
+});
+
+export const getClinicAppointments = asyncHandler(async (req, res) => {
+  const { doctorId, status, date, patientId, from, to } = req.query;
+  const appointments = await appointmentService.getClinicAppointments(req.user, {
+    doctorId,
+    status: status ? String(status).split(",") : undefined,
+    date,
+    patientId,
+    from,
+    to,
+  });
+  res.status(200).json(new ApiResponse(true, "Clinic appointments fetched", { appointments }));
+});
+
 export const cancelAppointment = asyncHandler(async (req, res) => {
   const { reason } = cancelAppointmentSchema.parse(req.body);
   const appointment = await appointmentService.cancelAppointment(req.user, req.params.appointmentId, reason);

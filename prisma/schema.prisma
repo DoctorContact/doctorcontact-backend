@@ -162,7 +162,13 @@ model Patient {
   dob         DateTime?
   gender      String?
   bloodGroup  String?
-  
+
+  // Part 8: when a patient cancels an appointment while they had 3 active
+  // advance appointments, new bookings are blocked until this timestamp.
+  // Null/past = no restriction. Only ever set by the cancellation flow —
+  // never touched by a normal cancellation that didn't hit the 3-active case.
+  bookingRestrictedUntil DateTime?
+
   user        User?    @relation(fields: [userId], references: [id])
   appointments Appointment[]
   reviews              Review[]

@@ -25,12 +25,25 @@ import {
   getHolidayForClinicDate,
   getConsultationMinutesForDoctorClinic,
   findAppointmentByIdFull,
+  findAppointmentForLiveView,
   cancelAppointmentRecord,
   findConflictingAppointmentForPatient,
-  getDoctorLeaveForDate // <--- ADD THIS HERE
+  getDoctorLeaveForDate, // <--- ADD THIS HERE
+  countActiveAppointmentsForPatient,
+  getPatientRestrictionStatus,
+  setPatientBookingRestriction,
+  countActiveTokensAhead,
+  findAppointmentsForClinic,
 } from "./appointment.repository.js";
 import { emitQueueUpdate } from "../../sockets/queue.socket.js";
+
 import { assertScheduleBookableNow } from "../doctor/availability.service.js";
+import {
+  MAX_ACTIVE_APPOINTMENTS,
+  POST_CANCEL_RESTRICTION_DAYS,
+  DEFAULT_CONSULTATION_MINUTES,
+} from "./appointment.constants.js";
+import { computeQueueView } from "./appointment.helper.js";
 
 const DAY_NAMES = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
 
@@ -116,6 +129,24 @@ export const bookReceptionAppointment = async (
   });
 };
 
+const ACTIVE_STATUSES = ["WAITING", "CHECKED_IN"];
+
+const isSameDay = (a, b) => {
+  const da = new Date(a);
+  const db = new Date(b);
+  return da.toDateString() === db.toDateString();
+};
+
+// Part 4: bucket an appointment for the patient dashboard — TODAY takes
+// priority over UPCOMING when the date matches today; completed/cancelled
+// always fall into HISTORY regardless of date. Nothing is ever deleted;
+// this is purely a display-side classification of stored rows.
+const bucketAppointment = (appt) => {
+  if (appt.status === "COMPLETED" || appt.status === "CANCELLED") return "HISTORY";
+  if (isSameDay(appt.date, new Date())) return "TODAY";
+  return "UPCOMING";
+};
+
 export const getMyAppointments = async (patientUserId) => {
   const patient = await getPatientByUserId(patientUserId);
   if (!patient) throw new ApiError(404, "Patient profile not found");
@@ -125,25 +156,142 @@ export const getMyAppointments = async (patientUserId) => {
   const appointmentsWithVisibility = await Promise.all(
     appointments.map(async (appt) => {
       const queueMode = await getQueueModeForDoctorClinic(appt.doctorId, appt.clinicId);
-      const patientsAhead = Math.max(0, appt.token - appt.queue.currentToken - 1);
-      const consultationMinutes = await getConsultationMinutesForDoctorClinic(appt.doctorId, appt.clinicId);
-      const estimatedWaitMinutes = patientsAhead * consultationMinutes;
+      const consultationMinutes =
+        (await getConsultationMinutesForDoctorClinic(appt.doctorId, appt.clinicId)) || DEFAULT_CONSULTATION_MINUTES;
+
+      // Part 14: correct "patients ahead" — only ACTIVE tokens strictly
+      // between the current token and this patient's token count. Cancelled/
+      // absent/completed tokens in that numeric range are excluded.
+      const activeTokensAhead = ACTIVE_STATUSES.includes(appt.status)
+        ? await countActiveTokensAhead(appt.queueId, appt.queue.currentToken, appt.token)
+        : 0;
+
+      const queueView = computeQueueView({
+        currentToken: appt.queue.currentToken,
+        patientToken: appt.token,
+        activeTokensAhead,
+        consultationMinutes,
+      });
+
+      const bucket = bucketAppointment(appt);
+
+      const base = {
+        ...appt,
+        bucket,
+        patientsAhead: queueView.patientsAhead,
+        isYourTurn: queueView.isYourTurn,
+        estimatedWaitMinutes: queueView.estimatedWaitMinutes,
+        estimatedWaitLabel: queueView.estimatedWaitLabel,
+      };
 
       if (queueMode === "PRIVATE") {
-        return {
-          ...appt,
-          queue: { status: appt.queue.status },
-          queueMode: "PRIVATE",
-          patientsAhead,
-          estimatedWaitMinutes,
-        };
+        return { ...base, queue: { status: appt.queue.status }, queueMode: "PRIVATE" };
       }
 
-      return { ...appt, queueMode: "LIVE", patientsAhead, estimatedWaitMinutes };
+      return { ...base, queueMode: "LIVE" };
     })
   );
 
   return appointmentsWithVisibility;
+};
+
+// Part 4/8: everything the patient dashboard's header needs besides the
+// appointment list itself — how many active slots are used, and whether
+// they're currently under a post-cancellation booking freeze.
+export const getMyBookingStatus = async (patientUserId) => {
+  const patient = await getPatientByUserId(patientUserId);
+  if (!patient) throw new ApiError(404, "Patient profile not found");
+
+  const activeCount = await countActiveAppointmentsForPatient(patient.id);
+  const restriction = await getPatientRestrictionStatus(patient.id);
+  const restrictedUntil =
+    restriction?.bookingRestrictedUntil && new Date(restriction.bookingRestrictedUntil) > new Date()
+      ? restriction.bookingRestrictedUntil
+      : null;
+
+  return {
+    activeAppointments: activeCount,
+    maxActiveAppointments: MAX_ACTIVE_APPOINTMENTS,
+    canBookMore: activeCount < MAX_ACTIVE_APPOINTMENTS && !restrictedUntil,
+    bookingRestrictedUntil: restrictedUntil,
+  };
+};
+
+// Part 13/21: single-appointment live view — fetched on open, then kept live
+// via Socket.io (client re-fetches this on reconnect / relevant events). The
+// backend remains the source of truth; sockets only signal "something
+// changed", they never carry the authoritative state themselves.
+export const getAppointmentLiveView = async (user, appointmentId) => {
+  const appt = await findAppointmentForLiveView(appointmentId);
+  if (!appt) throw new ApiError(404, "Appointment not found");
+
+  if (user.role === "PATIENT" && appt.patient.userId !== user.id) {
+    throw new ApiError(403, "This appointment does not belong to you");
+  }
+
+  const queueMode = await getQueueModeForDoctorClinic(appt.doctorId, appt.clinicId);
+  const consultationMinutes =
+    (await getConsultationMinutesForDoctorClinic(appt.doctorId, appt.clinicId)) || DEFAULT_CONSULTATION_MINUTES;
+
+  const activeTokensAhead = ACTIVE_STATUSES.includes(appt.status)
+    ? await countActiveTokensAhead(appt.queueId, appt.queue.currentToken, appt.token)
+    : 0;
+
+  const queueView = computeQueueView({
+    currentToken: appt.queue.currentToken,
+    patientToken: appt.token,
+    activeTokensAhead,
+    consultationMinutes,
+  });
+
+  return {
+    appointmentId: appt.id,
+    status: appt.status,
+    token: appt.token,
+    date: appt.date,
+    doctorName: appt.doctor?.user?.name,
+    clinicName: appt.clinic?.clinicName,
+    session: appt.queue?.schedule
+      ? { startTime: appt.queue.schedule.startTime, endTime: appt.queue.schedule.endTime }
+      : null,
+    queueMode,
+    queueStatus: appt.queue?.status,
+    // In PRIVATE mode the clinic doesn't want the numeric queue position
+    // exposed — only whether it's this patient's turn and general status.
+    ...(queueMode === "PRIVATE"
+      ? { isYourTurn: queueView.isYourTurn }
+      : {
+          currentToken: queueView.currentToken,
+          yourToken: queueView.yourToken,
+          patientsAhead: queueView.patientsAhead,
+          isYourTurn: queueView.isYourTurn,
+          estimatedWaitMinutes: queueView.estimatedWaitMinutes,
+          estimatedWaitLabel: queueView.estimatedWaitLabel,
+        }),
+  };
+};
+
+// Part 10/11: clinic/receptionist-facing appointment list, always scoped to
+// the caller's OWN clinic — clinicId never comes from the request, it's
+// resolved from the authenticated user, so Clinic A can never pass Clinic
+// B's id and see its appointments.
+export const getClinicAppointments = async (user, filters) => {
+  const clinicId = await resolveClinicIdForStaffUser(user);
+  return findAppointmentsForClinic(clinicId, filters);
+};
+
+const resolveClinicIdForStaffUser = async (user) => {
+  if (user.role === "CLINIC") {
+    const clinic = await findClinicByUserId(user.id);
+    if (!clinic) throw new ApiError(404, "Clinic not found");
+    return clinic.id;
+  }
+  if (user.role === "RECEPTIONIST") {
+    const receptionist = await findReceptionistByUserId(user.id);
+    if (!receptionist) throw new ApiError(404, "Receptionist not found");
+    return receptionist.clinicId;
+  }
+  throw new ApiError(403, "Only clinic or receptionist accounts can view clinic appointment lists");
 };
 
 const assertAppointmentModifyAccess = async (user, appointment) => {
@@ -191,10 +339,24 @@ export const cancelAppointment = async (user, appointmentId, reason) => {
 
   await assertAppointmentModifyAccess(user, appointment);
 
+  // Part 8: check BEFORE cancelling whether the patient was at the 3-active
+  // cap. If so, cancelling this one still leaves them going from 3 -> 2
+  // active, but it starts a 2-day freeze on booking a replacement. This is
+  // intentionally the ONLY trigger — cancelling with 1 or 2 active
+  // appointments never restricts future booking.
+  const activeCountBeforeCancel = await countActiveAppointmentsForPatient(appointment.patientId);
+  const shouldRestrict = activeCountBeforeCancel >= MAX_ACTIVE_APPOINTMENTS;
+
   const cancelled = await cancelAppointmentRecord(appointmentId, {
     cancelReason: reason,
     cancelledBy: user.id,
   });
+
+  if (shouldRestrict) {
+    const restrictedUntil = new Date();
+    restrictedUntil.setDate(restrictedUntil.getDate() + POST_CANCEL_RESTRICTION_DAYS);
+    await setPatientBookingRestriction(appointment.patientId, restrictedUntil);
+  }
 
   await logAudit({
     actorUserId: user.id,
@@ -292,8 +454,37 @@ const assertBookableClinic = async (doctorId, clinicId) => {
   }
 };
 
+// Part 8: block new bookings while the patient is under a post-cancellation
+// freeze. This ONLY ever gets set by cancelAppointment when the patient was
+// at the 3-active cap at the time of cancelling — every other cancellation
+// leaves it untouched, so this never blocks a normal cancellation.
+const assertNotBookingRestricted = async (patientId) => {
+  const patient = await getPatientRestrictionStatus(patientId);
+  if (patient?.bookingRestrictedUntil && new Date(patient.bookingRestrictedUntil) > new Date()) {
+    throw new ApiError(
+      403,
+      `You cancelled a recent appointment while at your active-appointment limit. New bookings are temporarily paused until ${patient.bookingRestrictedUntil.toISOString().split("T")[0]}.`
+    );
+  }
+};
+
+// Part 5/6: hard backend cap — a patient may have at most MAX_ACTIVE_APPOINTMENTS
+// WAITING/CHECKED_IN appointments at once. COMPLETED/CANCELLED never count.
+const assertUnderActiveAppointmentLimit = async (patientId) => {
+  const activeCount = await countActiveAppointmentsForPatient(patientId);
+  if (activeCount >= MAX_ACTIVE_APPOINTMENTS) {
+    throw new ApiError(
+      409,
+      `You already have ${activeCount} active upcoming appointments — the maximum allowed is ${MAX_ACTIVE_APPOINTMENTS}. Please complete or cancel one before booking another.`
+    );
+  }
+};
+
 const bookAppointmentCore = async ({ doctorId, clinicId, scheduleId, patientId, date, bookingSource }) => {
   try {
+    await assertNotBookingRestricted(patientId);
+    await assertUnderActiveAppointmentLimit(patientId);
+
     const doctor = await getDoctorById(doctorId);
     if (!doctor) throw new ApiError(404, "Doctor not found");
     if (!doctor.isVerified) throw new ApiError(403, "Doctor is not yet verified");
