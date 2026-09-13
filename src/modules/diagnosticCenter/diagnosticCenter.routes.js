@@ -20,6 +20,7 @@ router.get(
   centerController.getMyStaffProfile
 );
 
+
 router.use(authMiddleware, roleMiddleware("DIAGNOSTIC_CENTER"));
 
 router.get("/profile", centerController.getMyProfile);
