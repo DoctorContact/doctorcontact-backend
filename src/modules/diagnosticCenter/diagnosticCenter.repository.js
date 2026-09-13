@@ -8,6 +8,43 @@ export const findCenterById = (id) => {
   return prisma.diagnosticCenter.findUnique({ where: { id } });
 };
 
+// Public lab-details page: only ever expose APPROVED centers. Pulls
+// workingHours (for the Available Now / Offline badge) and availableTests
+// (with price/availability) in one query so the frontend needs one call.
+export const findApprovedCenterWithTests = (id) => {
+  return prisma.diagnosticCenter.findFirst({
+    where: { id, isApproved: true },
+    include: {
+      workingHours: true,
+      availableTests: {
+        where: { isAvailable: true },
+        include: { test: true },
+        orderBy: { test: { name: "asc" } },
+      },
+    },
+  });
+};
+
+// --- Working hours (own dashboard, mirrors clinic.repository.js pattern) ---
+export const upsertCenterWorkingHours = (diagnosticCenterId, workingHours) =>
+  prisma.$transaction(
+    workingHours.map((wh) =>
+      prisma.diagnosticCenterWorkingHours.upsert({
+        where: {
+          diagnosticCenterId_dayOfWeek: { diagnosticCenterId, dayOfWeek: wh.dayOfWeek },
+        },
+        update: { openTime: wh.openTime, closeTime: wh.closeTime, isClosed: wh.isClosed },
+        create: { diagnosticCenterId, ...wh },
+      })
+    )
+  );
+
+export const findCenterWorkingHours = (diagnosticCenterId) =>
+  prisma.diagnosticCenterWorkingHours.findMany({
+    where: { diagnosticCenterId },
+    orderBy: { dayOfWeek: "asc" },
+  });
+
 export const updateCenterProfile = (id, data) => {
   return prisma.diagnosticCenter.update({ where: { id }, data });
 };
@@ -50,20 +87,34 @@ export const findStaffById = (id) => {
   return prisma.diagnosticCenterStaff.findUnique({ where: { id } });
 };
 
+// NOTE: hasHomeService + workingHours are included here (not just on the
+// public single-center endpoint) because the labs LIST page filters by
+// "home service only" and shows an ONLINE badge per card — without these
+// two fields that filter/badge silently does nothing on every card.
+const LIST_SELECT = {
+  id: true,
+  centerName: true,
+  city: true,
+  address: true,
+  logo: true,
+  hasHomeService: true,
+  workingHours: true,
+};
+
 export const searchCentersByName = (name) => {
   return prisma.diagnosticCenter.findMany({
     where: {
       isApproved: true,
       centerName: { contains: name, mode: "insensitive" },
     },
-    select: { id: true, centerName: true, city: true, address: true, logo: true },
+    select: LIST_SELECT,
   });
 };
 
 export const searchAllApprovedCenters = () => {
   return prisma.diagnosticCenter.findMany({
     where: { isApproved: true },
-    select: { id: true, centerName: true, city: true, address: true, logo: true },
+    select: LIST_SELECT,
   });
 };
 
@@ -78,8 +129,8 @@ export const getActiveGlobalTests = () => {
 export const getCenterTests = (diagnosticCenterId) => {
   return prisma.centerTest.findMany({
     where: { diagnosticCenterId },
-    include: { diagnosticTest: true },              // ছিল: test: true
-    orderBy: { diagnosticTest: { name: "asc" } },    // ছিল: test: { name: "asc" }
+    include: { test: true },
+    orderBy: { test: { name: "asc" } },
   });
 };
 
@@ -96,7 +147,7 @@ export const findCenterTestByCenterAndTest = (diagnosticCenterId, testId) => {
 export const addTestToCenter = (data) => {
   return prisma.centerTest.create({
     data,
-    include: { diagnosticTest: true },               // ছিল: test: true
+    include: { test: true },
   });
 };
 
@@ -104,7 +155,7 @@ export const updateCenterTest = (id, data) => {
   return prisma.centerTest.update({
     where: { id },
     data,
-    include: { diagnosticTest: true },               // ছিল: test: true
+    include: { test: true },
   });
 };
 
@@ -113,28 +164,3 @@ export const removeCenterTest = (id) => {
     where: { id },
   });
 };
-
-// Part: working hours for a Diagnostic Center — mirrors
-// clinic.repository.js's upsertWorkingHours/findWorkingHours exactly, just
-// against DiagnosticCenterWorkingHours instead of ClinicWorkingHours.
-export const upsertWorkingHours = (diagnosticCenterId, workingHours) =>
-  prisma.$transaction(
-    workingHours.map((wh) =>
-      prisma.diagnosticCenterWorkingHours.upsert({
-        where: { diagnosticCenterId_dayOfWeek: { diagnosticCenterId, dayOfWeek: wh.dayOfWeek } },
-        update: { openTime: wh.openTime, closeTime: wh.closeTime, isClosed: wh.isClosed },
-        create: { diagnosticCenterId, ...wh },
-      })
-    )
-  );
-
-export const findWorkingHours = (diagnosticCenterId) =>
-  prisma.diagnosticCenterWorkingHours.findMany({
-    where: { diagnosticCenterId },
-    orderBy: { dayOfWeek: "asc" },
-  });
-
-export const findWorkingHoursForDay = (diagnosticCenterId, dayOfWeek) =>
-  prisma.diagnosticCenterWorkingHours.findUnique({
-    where: { diagnosticCenterId_dayOfWeek: { diagnosticCenterId, dayOfWeek } },
-  });

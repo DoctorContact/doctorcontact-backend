@@ -162,13 +162,7 @@ model Patient {
   dob         DateTime?
   gender      String?
   bloodGroup  String?
-
-  // Part 8: when a patient cancels an appointment while they had 3 active
-  // advance appointments, new bookings are blocked until this timestamp.
-  // Null/past = no restriction. Only ever set by the cancellation flow —
-  // never touched by a normal cancellation that didn't hit the 3-active case.
-  bookingRestrictedUntil DateTime?
-
+  
   user        User?    @relation(fields: [userId], references: [id])
   appointments Appointment[]
   reviews              Review[]
@@ -408,6 +402,7 @@ model DiagnosticCenter {
   phone             String?
   whatsapp          String?
   googleMapsUrl     String?
+  hasHomeService    Boolean                 @default(false)
 
   // Relations
   staff             DiagnosticCenterStaff[]
@@ -417,25 +412,6 @@ model DiagnosticCenter {
   workingHours      DiagnosticCenterWorkingHours[]
 
   @@map("diagnostic_centers")
-}
-
-// This model was referenced by diagnosticCenter.repository.js's
-// upsertWorkingHours() but was never actually defined here — calling that
-// function would throw at runtime ("Cannot read properties of undefined
-// (reading 'upsert')"). Mirrors ClinicWorkingHours exactly.
-model DiagnosticCenterWorkingHours {
-  id                 String          @id @default(uuid())
-  diagnosticCenterId String
-  dayOfWeek          DayOfWeek
-  openTime           String?
-  closeTime          String?
-  isClosed           Boolean         @default(false)
-  createdAt          DateTime        @default(now())
-  updatedAt          DateTime        @updatedAt
-  diagnosticCenter   DiagnosticCenter @relation(fields: [diagnosticCenterId], references: [id], onDelete: Cascade)
-
-  @@unique([diagnosticCenterId, dayOfWeek])
-  @@map("diagnostic_center_working_hours")
 }
 
 model DiagnosticCenterStaff {
@@ -696,6 +672,24 @@ model CenterTest {
 
   @@unique([diagnosticCenterId, testId])
   @@map("center_tests")
+}
+
+// Mirrors ClinicWorkingHours — per-day open/close time for a diagnostic
+// center, used to compute the "Available Now / Offline" badge on the
+// public lab-details page (evaluateCenterAvailability helper).
+model DiagnosticCenterWorkingHours {
+  id                 String           @id @default(uuid())
+  diagnosticCenterId String
+  dayOfWeek          DayOfWeek
+  openTime           String?
+  closeTime          String?
+  isClosed           Boolean          @default(false)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  diagnosticCenter   DiagnosticCenter @relation(fields: [diagnosticCenterId], references: [id], onDelete: Cascade)
+
+  @@unique([diagnosticCenterId, dayOfWeek])
+  @@map("diagnostic_center_working_hours")
 }
 
 model OtpSession {

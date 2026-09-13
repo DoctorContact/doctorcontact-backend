@@ -3,7 +3,7 @@ import ApiResponse from "../../utils/apiResponse.js";
 import ApiError from "../../utils/apiError.js";
 import * as centerService from "./diagnosticCenter.service.js";
 import { updateCenterProfileSchema, createStaffSchema, changeStaffPasswordSchema, addCenterTestSchema, 
-  updateCenterTestSchema, setWorkingHoursSchema } from "./diagnosticCenter.validation.js";
+  updateCenterTestSchema, updateWorkingHoursSchema } from "./diagnosticCenter.validation.js";
 
 export const getMyProfile = asyncHandler(async (req, res) => {
   const center = await centerService.getMyProfile(req.user.id);
@@ -56,6 +56,22 @@ export const listAllApprovedCenters = asyncHandler(async (req, res) => {
   res.status(200).json(new ApiResponse(true, "Diagnostic centers fetched", { centers }));
 });
 
+export const getPublicCenterDetails = asyncHandler(async (req, res) => {
+  const result = await centerService.getPublicCenterDetails(req.params.centerId);
+  res.status(200).json(new ApiResponse(true, "Diagnostic center details fetched", result));
+});
+
+export const getWorkingHours = asyncHandler(async (req, res) => {
+  const hours = await centerService.getMyWorkingHours(req.user.id);
+  res.status(200).json(new ApiResponse(true, "Working hours fetched", { hours }));
+});
+
+export const updateWorkingHours = asyncHandler(async (req, res) => {
+  const { hours } = updateWorkingHoursSchema.parse(req.body);
+  const updated = await centerService.updateMyWorkingHours(req.user.id, hours);
+  res.status(200).json(new ApiResponse(true, "Working hours updated", { hours: updated }));
+});
+
 export const getGlobalTests = asyncHandler(async (req, res) => {
   const tests = await centerService.listActiveGlobalTests();
   res.status(200).json(new ApiResponse(true, "Global diagnostic tests fetched", { tests }));
@@ -81,15 +97,4 @@ export const updateCenterTest = asyncHandler(async (req, res) => {
 export const removeCenterTest = asyncHandler(async (req, res) => {
   await centerService.removeCenterTestConfig(req.user.id, req.params.testId);
   res.status(200).json(new ApiResponse(true, "Test removed from center"));
-});
-
-export const setWorkingHours = asyncHandler(async (req, res) => {
-  const { hours } = setWorkingHoursSchema.parse(req.body);
-  const result = await centerService.setWorkingHours(req.user.id, hours);
-  res.status(200).json(new ApiResponse(true, "Working hours updated", { hours: result }));
-});
-
-export const getWorkingHours = asyncHandler(async (req, res) => {
-  const hours = await centerService.getWorkingHours(req.user.id);
-  res.status(200).json(new ApiResponse(true, "Working hours fetched", { hours }));
 });

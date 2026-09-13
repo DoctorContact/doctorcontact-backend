@@ -2,9 +2,11 @@ import ApiError from "../../utils/apiError.js";
 import { hashPassword } from "../auth/auth.helper.js";
 import { findUserByEmail, updateUserPassword } from "../auth/auth.repository.js";
 import { uploadBufferToCloudinary, deleteFromCloudinary } from "../../utils/cloudinaryUpload.js";
+import { evaluateCenterAvailability } from "./diagnosticCenter.helper.js";
 import {
   findCenterByUserId,
   findCenterById,
+  findApprovedCenterWithTests,
   updateCenterProfile,
   updateCenterLogo,
   createStaffWithUser,
@@ -20,8 +22,8 @@ import {
   addTestToCenter,
   updateCenterTest,
   removeCenterTest,
-  upsertWorkingHours,
-  findWorkingHours,
+  upsertCenterWorkingHours,
+  findCenterWorkingHours,
 } from "./diagnosticCenter.repository.js";
 
 
@@ -96,16 +98,61 @@ export const uploadLogo = async (centerUserId, fileBuffer) => {
   return updated;
 };
 
+// Attaches a live isOnline flag to each center card without leaking the
+// raw workingHours array to the frontend (same shape as before, +isOnline).
+const withAvailability = (center) => {
+  const { workingHours, ...rest } = center;
+  const { isOnline } = evaluateCenterAvailability({ workingHours });
+  return { ...rest, isOnline };
+};
+
 export const searchByName = async (name) => {
-  return searchCentersByName(name);
+  const centers = await searchCentersByName(name);
+  return centers.map(withAvailability);
 };
 
 export const listAllApprovedCenters = async () => {
-  return searchAllApprovedCenters();
+  const centers = await searchAllApprovedCenters();
+  return centers.map(withAvailability);
 };
 
 export const listActiveGlobalTests = async () => {
   return getActiveGlobalTests();
+};
+
+// Public lab-details page — no auth required, so we never leak an
+// unapproved/pending center: 404 if it doesn't exist OR isn't approved yet.
+// isOnline is computed live from workingHours (day + IST time), not stored.
+export const getPublicCenterDetails = async (centerId) => {
+  const center = await findApprovedCenterWithTests(centerId);
+  if (!center) throw new ApiError(404, "Diagnostic center not found");
+
+  const { availableTests, workingHours, ...centerInfo } = center;
+  const { isOnline, status } = evaluateCenterAvailability({ workingHours });
+
+  const tests = availableTests.map((ct) => ({
+    id: ct.id, // CenterTest id — this is what the frontend keys its list on
+    testId: ct.testId,
+    name: ct.test.name,
+    description: ct.test.description,
+    price: ct.price,
+  }));
+
+  return { center: { ...centerInfo, isOnline, availabilityStatus: status }, tests };
+};
+
+// --- Working hours (own dashboard) ---
+export const getMyWorkingHours = async (userId) => {
+  const center = await findCenterByUserId(userId);
+  if (!center) throw new ApiError(404, "Diagnostic center profile not found");
+  return findCenterWorkingHours(center.id);
+};
+
+export const updateMyWorkingHours = async (userId, workingHours) => {
+  const center = await findCenterByUserId(userId);
+  if (!center) throw new ApiError(404, "Diagnostic center profile not found");
+  await upsertCenterWorkingHours(center.id, workingHours);
+  return findCenterWorkingHours(center.id);
 };
 
 export const listMyTests = async (userId) => {
@@ -154,17 +201,4 @@ export const removeCenterTestConfig = async (userId, centerTestId) => {
 
   await removeCenterTest(centerTestId);
   return { deleted: true };
-};
-
-// Mirrors clinic.service.js's setWorkingHours/getWorkingHours.
-export const setWorkingHours = async (userId, workingHours) => {
-  const center = await findCenterByUserId(userId);
-  if (!center) throw new ApiError(404, "Diagnostic center profile not found");
-  return upsertWorkingHours(center.id, workingHours);
-};
-
-export const getWorkingHours = async (userId) => {
-  const center = await findCenterByUserId(userId);
-  if (!center) throw new ApiError(404, "Diagnostic center profile not found");
-  return findWorkingHours(center.id);
 };

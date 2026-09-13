@@ -12,6 +12,30 @@ export const updateCenterProfileSchema = z.object({
   googleMapsUrl: z.string().url("Must be a valid URL").optional().or(z.literal("")),
   latitude: z.number().optional(),
   longitude: z.number().optional(),
+  hasHomeService: z.boolean().optional(),
+});
+
+const dayOfWeekEnum = z.enum([
+  "MONDAY",
+  "TUESDAY",
+  "WEDNESDAY",
+  "THURSDAY",
+  "FRIDAY",
+  "SATURDAY",
+  "SUNDAY",
+]);
+
+export const updateWorkingHoursSchema = z.object({
+  hours: z
+    .array(
+      z.object({
+        dayOfWeek: dayOfWeekEnum,
+        openTime: z.string().optional(), // "HH:mm"
+        closeTime: z.string().optional(),
+        isClosed: z.boolean().default(false),
+      })
+    )
+    .min(1, "At least one day's schedule is required"),
 });
 
 export const createStaffSchema = z.object({
@@ -36,32 +60,4 @@ export const addCenterTestSchema = z.object({
 export const updateCenterTestSchema = z.object({
   price: z.number().nonnegative().optional(),
   isAvailable: z.boolean().optional(),
-});
-
-// Diagnostic-center working hours (Lab Manager). Field/verb names here
-// intentionally match what the frontend (useDiagnosticCenter.ts /
-// diagnosticCenter/schedule page) already sends and expects — PUT with a
-// `hours` array, response under `hours` — rather than the clinic module's
-// `workingHours` naming, since that UI was already built against this shape.
-export const setWorkingHoursSchema = z.object({
-  hours: z
-    .array(
-      z.object({
-        dayOfWeek: z.string().transform((v) => v.toUpperCase()).pipe(
-          z.enum(["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"])
-        ),
-        isClosed: z.boolean().default(false),
-        openTime: z
-          .string()
-          .nullable()
-          .optional()
-          .refine((val) => !val || /^([01]\d|2[0-3]):([0-5]\d)$/.test(val), "openTime must be HH:mm"),
-        closeTime: z
-          .string()
-          .nullable()
-          .optional()
-          .refine((val) => !val || /^([01]\d|2[0-3]):([0-5]\d)$/.test(val), "closeTime must be HH:mm"),
-      })
-    )
-    .min(1, "At least one day is required"),
 });
