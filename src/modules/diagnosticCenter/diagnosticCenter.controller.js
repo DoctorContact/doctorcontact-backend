@@ -57,19 +57,9 @@ export const listAllApprovedCenters = asyncHandler(async (req, res) => {
 });
 
 export const getPublicCenterDetails = asyncHandler(async (req, res) => {
-  const result = await centerService.getPublicCenterDetails(req.params.centerId);
-  res.status(200).json(new ApiResponse(true, "Diagnostic center details fetched", result));
-});
-
-export const getWorkingHours = asyncHandler(async (req, res) => {
-  const hours = await centerService.getMyWorkingHours(req.user.id);
-  res.status(200).json(new ApiResponse(true, "Working hours fetched", { hours }));
-});
-
-export const updateWorkingHours = asyncHandler(async (req, res) => {
-  const { hours } = updateWorkingHoursSchema.parse(req.body);
-  const updated = await centerService.updateMyWorkingHours(req.user.id, hours);
-  res.status(200).json(new ApiResponse(true, "Working hours updated", { hours: updated }));
+  const { id } = req.params;
+  const data = await centerService.getPublicCenterDetails(id);
+  res.status(200).json(new ApiResponse(true, "Diagnostic center details fetched", data));
 });
 
 export const getGlobalTests = asyncHandler(async (req, res) => {
@@ -97,4 +87,16 @@ export const updateCenterTest = asyncHandler(async (req, res) => {
 export const removeCenterTest = asyncHandler(async (req, res) => {
   await centerService.removeCenterTestConfig(req.user.id, req.params.testId);
   res.status(200).json(new ApiResponse(true, "Test removed from center"));
+});
+
+// === NEW: Working Hours ===
+export const getWorkingHours = asyncHandler(async (req, res) => {
+  const hours = await centerService.getMyWorkingHours(req.user.id);
+  res.status(200).json(new ApiResponse(true, "Working hours fetched", { hours }));
+});
+
+export const updateWorkingHours = asyncHandler(async (req, res) => {
+  const { hours } = updateWorkingHoursSchema.parse(req.body);
+  const updated = await centerService.updateMyWorkingHours(req.user.id, hours);
+  res.status(200).json(new ApiResponse(true, "Working hours updated", { hours: updated }));
 });
