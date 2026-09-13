@@ -6,20 +6,12 @@ import upload from "../../middlewares/upload.middleware.js";
 
 const router = Router();
 
-// === 1. PUBLIC ROUTES (No Auth Required) ===
-router.get("/all", centerController.listAllApprovedCenters);
-router.get("/public/:id", centerController.getPublicCenterDetails);
-
-// === 2. SUPER ADMIN ROUTES (Must be placed before DIAGNOSTIC_CENTER global middleware) ===
-router.post("/admin/global-tests", authMiddleware, roleMiddleware("SUPER_ADMIN"), centerController.adminAddGlobalTest);
-router.patch("/admin/global-tests/:id", authMiddleware, roleMiddleware("SUPER_ADMIN"), centerController.adminUpdateGlobalTest);
-router.delete("/admin/global-tests/:id", authMiddleware, roleMiddleware("SUPER_ADMIN"), centerController.adminDeleteGlobalTest);
-
-// === 3. GENERAL AUTHENTICATED ROUTES ===
+// Any authenticated user can browse/search diagnostic centers and view global tests
 router.get("/search", authMiddleware, centerController.searchByName);
-router.get("/global-tests", authMiddleware, centerController.getGlobalTests); 
+router.get("/all", authMiddleware, centerController.listAllApprovedCenters);
+router.get("/global-tests", authMiddleware, centerController.getGlobalTests); // NEW
 
-// === 4. DIAGNOSTIC STAFF ROUTES ===
+// DIAGNOSTIC_STAFF portal: own profile + parent center
 router.get(
   "/staff/me",
   authMiddleware,
@@ -27,12 +19,7 @@ router.get(
   centerController.getMyStaffProfile
 );
 
-// === 5. DIAGNOSTIC CENTER (Lab Manager) ROUTES ===
-// 🟢 নিচের লাইনের পর থেকে সবকিছু শুধু ল্যাব ম্যানেজার অ্যাক্সেস পাবে
 router.use(authMiddleware, roleMiddleware("DIAGNOSTIC_CENTER"));
-
-router.get("/working-hours", centerController.getCenterWorkingHoursController);
-router.put("/working-hours", centerController.updateWorkingHours);
 
 router.get("/profile", centerController.getMyProfile);
 router.patch("/profile", centerController.updateMyProfile);
@@ -43,9 +30,14 @@ router.patch("/staff/change-password", centerController.changeStaffPassword);
 
 router.post("/logo", upload.single("photo"), centerController.uploadLogo);
 
+// === NEW: Step 26 Diagnostic Tests Routes ===
 router.get("/tests", centerController.getMyTests);
 router.post("/tests", centerController.addCenterTest);
 router.patch("/tests/:testId", centerController.updateCenterTest);
 router.delete("/tests/:testId", centerController.removeCenterTest);
+
+// Working hours (matches the existing frontend contract — PUT + `hours`)
+router.put("/working-hours", centerController.setWorkingHours);
+router.get("/working-hours", centerController.getWorkingHours);
 
 export default router;

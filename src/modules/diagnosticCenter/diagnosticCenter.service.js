@@ -20,14 +20,10 @@ import {
   addTestToCenter,
   updateCenterTest,
   removeCenterTest,
-  // 🟢 যুক্ত করা হলো
-  findGlobalTestByName,
-  createGlobalTest, 
-  editGlobalTest, 
-  deleteGlobalTest, 
-  upsertWorkingHours, 
-  getWorkingHours 
+  upsertWorkingHours,
+  findWorkingHours,
 } from "./diagnosticCenter.repository.js";
+
 
 export const getMyProfile = async (userId) => {
   const center = await findCenterByUserId(userId);
@@ -35,6 +31,7 @@ export const getMyProfile = async (userId) => {
   return center;
 };
 
+// DIAGNOSTIC_STAFF: their own profile + the center they belong to.
 export const getStaffProfile = async (userId) => {
   const staff = await findStaffByUserId(userId);
   if (!staff) throw new ApiError(404, "Staff profile not found");
@@ -44,7 +41,6 @@ export const getStaffProfile = async (userId) => {
 export const updateMyProfile = async (userId, data) => {
   const center = await findCenterByUserId(userId);
   if (!center) throw new ApiError(404, "Diagnostic center profile not found");
-  
   return updateCenterProfile(center.id, data);
 };
 
@@ -160,36 +156,15 @@ export const removeCenterTestConfig = async (userId, centerTestId) => {
   return { deleted: true };
 };
 
-export const addGlobalTest = async (data) => {
-  // 🟢 Prisma সরাসরি ব্যবহার না করে Repository এর ফাংশন কল করা হলো
-  const existing = await findGlobalTestByName(data.name);
-  if (existing) {
-    throw new ApiError(409, "A test with this name already exists.");
-  }
-  return createGlobalTest(data);
-};
-
-export const updateGlobalTest = async (id, data) => {
-  if (data.name) {
-    // 🟢 Prisma সরাসরি ব্যবহার না করে Repository এর ফাংশন কল করা হলো
-    const existing = await findGlobalTestByName(data.name);
-    if (existing && existing.id !== id) {
-      throw new ApiError(409, "A test with this name already exists.");
-    }
-  }
-  return editGlobalTest(id, data);
-};
-
-export const removeGlobalTest = async (id) => deleteGlobalTest(id);
-
-export const updateCenterWorkingHours = async (userId, hoursData) => {
+// Mirrors clinic.service.js's setWorkingHours/getWorkingHours.
+export const setWorkingHours = async (userId, workingHours) => {
   const center = await findCenterByUserId(userId);
-  if (!center) throw new ApiError(404, "Center not found");
-  return upsertWorkingHours(center.id, hoursData);
+  if (!center) throw new ApiError(404, "Diagnostic center profile not found");
+  return upsertWorkingHours(center.id, workingHours);
 };
 
-export const getCenterWorkingHours = async (userId) => {
+export const getWorkingHours = async (userId) => {
   const center = await findCenterByUserId(userId);
-  if (!center) throw new ApiError(404, "Center not found");
-  return getWorkingHours(center.id);
+  if (!center) throw new ApiError(404, "Diagnostic center profile not found");
+  return findWorkingHours(center.id);
 };

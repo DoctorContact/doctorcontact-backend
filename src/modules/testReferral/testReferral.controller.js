@@ -27,7 +27,7 @@ export const getIncomingReferrals = asyncHandler(async (req, res) => {
 
 export const getSentReferrals = asyncHandler(async (req, res) => {
   const query = listQuerySchema.parse(req.query);
-  const referrals = await referralService.getSentReferrals(req.user.id, query);
+  const referrals = await referralService.getSentReferrals(req.user, query);
   res.status(200).json(new ApiResponse(true, "Sent referrals fetched", { referrals }));
 });
 

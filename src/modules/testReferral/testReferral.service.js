@@ -9,6 +9,7 @@ import {
   findReferralsForDiagnosticCenter,
   countReferralsForDiagnosticCenter,
   findReferralsForClinic,
+  findReferralsForCreator,
   findAllReferrals,
   getPatientByUserId,
   getPatientById,
@@ -17,6 +18,8 @@ import {
   getClinicByUserId,
   getReceptionistByUserId,
   getDiagnosticStaffByUserId,
+  getApprovedClinicIdsForDoctor,
+  getAppointmentClinicId,
 } from "./testReferral.repository.js";
 import { findCenterByUserId } from "../diagnosticCenter/diagnosticCenter.repository.js";
 
@@ -35,11 +38,30 @@ const resolveDiagnosticCenterId = async (user) => {
   throw new ApiError(403, "Only a Diagnostic Center or its staff can perform this action");
 };
 
-const resolveCreatorContext = async (user) => {
+const resolveCreatorContext = async (user, { appointmentId } = {}) => {
   if (user.role === "DOCTOR") {
     const doctor = await getDoctorByUserId(user.id);
     if (!doctor) throw new ApiError(404, "Doctor profile not found");
-    return { referringClinicId: doctor.clinicId, createdByRole: "DOCTOR" };
+
+    // Prefer the clinic of the specific appointment/visit this referral is
+    // being made from — this is always correct even for a doctor who works
+    // at several clinics (Part 12 principle: never guess a doctor's clinic).
+    if (appointmentId) {
+      const clinicId = await getAppointmentClinicId(appointmentId);
+      if (clinicId) return { referringClinicId: clinicId, createdByRole: "DOCTOR" };
+    }
+
+    // Fall back to the doctor's primary clinicId (legacy field), then to
+    // any approved clinic association — `clinicId` can be null for a
+    // doctor who only ever joined clinics via associations.
+    if (doctor.clinicId) {
+      return { referringClinicId: doctor.clinicId, createdByRole: "DOCTOR" };
+    }
+    const [firstAssociatedClinicId] = await getApprovedClinicIdsForDoctor(doctor.id);
+    if (firstAssociatedClinicId) {
+      return { referringClinicId: firstAssociatedClinicId, createdByRole: "DOCTOR" };
+    }
+    throw new ApiError(400, "You are not currently associated with any clinic");
   }
 
   if (user.role === "RECEPTIONIST") {
@@ -58,7 +80,7 @@ const resolveCreatorContext = async (user) => {
 };
 
 export const createTestReferral = async (user, { patientId, appointmentId, diagnosticCenterId, testNames, notes }) => {
-  const { referringClinicId, createdByRole } = await resolveCreatorContext(user);
+  const { referringClinicId, createdByRole } = await resolveCreatorContext(user, { appointmentId });
 
   const patient = await getPatientById(patientId);
   if (!patient) throw new ApiError(404, "Patient not found");
@@ -185,10 +207,22 @@ export const updateReferralStatus = async (user, id, { status, resultNotes }) =>
   return updated;
 };
 
-export const getSentReferrals = async (clinicUserId, { page, limit }) => {
-  const clinic = await getClinicByUserId(clinicUserId);
-  if (!clinic) throw new ApiError(404, "Clinic profile not found");
-  return findReferralsForClinic({ clinicId: clinic.id, page, limit });
+// Part: CLINIC sees every referral sent under their clinic; DOCTOR/
+// RECEPTIONIST see only the ones they personally created — this used to be
+// CLINIC-only, which meant a doctor calling this endpoint got a hard 404
+// ("Clinic profile not found") since they have no Clinic record at all.
+export const getSentReferrals = async (user, { page, limit }) => {
+  if (user.role === "CLINIC") {
+    const clinic = await getClinicByUserId(user.id);
+    if (!clinic) throw new ApiError(404, "Clinic profile not found");
+    return findReferralsForClinic({ clinicId: clinic.id, page, limit });
+  }
+
+  if (user.role === "DOCTOR" || user.role === "RECEPTIONIST") {
+    return findReferralsForCreator({ createdByUserId: user.id, page, limit });
+  }
+
+  throw new ApiError(403, "Only a Doctor, Receptionist, or Clinic can view sent referrals");
 };
 
 export const getAllReferralsForAdmin = async ({ page, limit }) => {

@@ -56,12 +56,14 @@ export const searchCentersByName = (name) => {
       isApproved: true,
       centerName: { contains: name, mode: "insensitive" },
     },
+    select: { id: true, centerName: true, city: true, address: true, logo: true },
   });
 };
 
 export const searchAllApprovedCenters = () => {
   return prisma.diagnosticCenter.findMany({
     where: { isApproved: true },
+    select: { id: true, centerName: true, city: true, address: true, logo: true },
   });
 };
 
@@ -72,11 +74,12 @@ export const getActiveGlobalTests = () => {
   });
 };
 
+// Fetch tests specific to a center (with pricing and availability)
 export const getCenterTests = (diagnosticCenterId) => {
   return prisma.centerTest.findMany({
     where: { diagnosticCenterId },
-    include: { diagnosticTest: true }, 
-    orderBy: { diagnosticTest: { name: "asc" } }, 
+    include: { diagnosticTest: true },              // ছিল: test: true
+    orderBy: { diagnosticTest: { name: "asc" } },    // ছিল: test: { name: "asc" }
   });
 };
 
@@ -93,7 +96,7 @@ export const findCenterTestByCenterAndTest = (diagnosticCenterId, testId) => {
 export const addTestToCenter = (data) => {
   return prisma.centerTest.create({
     data,
-    include: { diagnosticTest: true }, 
+    include: { diagnosticTest: true },               // ছিল: test: true
   });
 };
 
@@ -101,7 +104,7 @@ export const updateCenterTest = (id, data) => {
   return prisma.centerTest.update({
     where: { id },
     data,
-    include: { diagnosticTest: true }, 
+    include: { diagnosticTest: true },               // ছিল: test: true
   });
 };
 
@@ -111,50 +114,27 @@ export const removeCenterTest = (id) => {
   });
 };
 
-// ==========================================
-// ADMIN: Global Test Management
-// ==========================================
-export const findGlobalTestByName = (name) => {
-  return prisma.diagnosticTest.findUnique({ where: { name } });
-};
-
-export const createGlobalTest = (data) => {
-  return prisma.diagnosticTest.create({ data });
-};
-
-export const editGlobalTest = (id, data) => {
-  return prisma.diagnosticTest.update({ where: { id }, data });
-};
-
-export const deleteGlobalTest = (id) => {
-  return prisma.diagnosticTest.delete({ where: { id } });
-};
-
-// ==========================================
-// LAB: Working Hours Management
-// ==========================================
-export const upsertWorkingHours = (diagnosticCenterId, hoursData) => {
-  return prisma.$transaction(
-    hoursData.map((hour) =>
+// Part: working hours for a Diagnostic Center — mirrors
+// clinic.repository.js's upsertWorkingHours/findWorkingHours exactly, just
+// against DiagnosticCenterWorkingHours instead of ClinicWorkingHours.
+export const upsertWorkingHours = (diagnosticCenterId, workingHours) =>
+  prisma.$transaction(
+    workingHours.map((wh) =>
       prisma.diagnosticCenterWorkingHours.upsert({
-        where: {
-          diagnosticCenterId_dayOfWeek: { diagnosticCenterId, dayOfWeek: hour.dayOfWeek },
-        },
-        update: { openTime: hour.openTime, closeTime: hour.closeTime, isClosed: hour.isClosed },
-        create: { 
-          diagnosticCenterId, 
-          dayOfWeek: hour.dayOfWeek, 
-          openTime: hour.openTime, 
-          closeTime: hour.closeTime, 
-          isClosed: hour.isClosed 
-        },
+        where: { diagnosticCenterId_dayOfWeek: { diagnosticCenterId, dayOfWeek: wh.dayOfWeek } },
+        update: { openTime: wh.openTime, closeTime: wh.closeTime, isClosed: wh.isClosed },
+        create: { diagnosticCenterId, ...wh },
       })
     )
   );
-};
 
-export const getWorkingHours = (diagnosticCenterId) => {
-  return prisma.diagnosticCenterWorkingHours.findMany({
-    where: { diagnosticCenterId }
+export const findWorkingHours = (diagnosticCenterId) =>
+  prisma.diagnosticCenterWorkingHours.findMany({
+    where: { diagnosticCenterId },
+    orderBy: { dayOfWeek: "asc" },
   });
-};
+
+export const findWorkingHoursForDay = (diagnosticCenterId, dayOfWeek) =>
+  prisma.diagnosticCenterWorkingHours.findUnique({
+    where: { diagnosticCenterId_dayOfWeek: { diagnosticCenterId, dayOfWeek } },
+  });

@@ -28,7 +28,7 @@ router.get(
   referralController.getCenterStats
 );
 
-router.get("/sent", authMiddleware, roleMiddleware("CLINIC"), referralController.getSentReferrals);
+router.get("/sent", authMiddleware, roleMiddleware("CLINIC", "DOCTOR", "RECEPTIONIST"), referralController.getSentReferrals);
 
 router.get(
   "/all",
