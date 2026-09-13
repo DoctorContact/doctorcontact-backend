@@ -91,7 +91,15 @@ router.get("/me", authMiddleware, roleMiddleware("PATIENT"), patientController.g
  */
 router.patch("/me", authMiddleware, roleMiddleware("PATIENT"), patientController.updateMyProfile);
 
-// src/modules/patient/patient.routes.js
-router.get("/search-by-phone", patientController.searchByPhone);
+// Legacy alias kept for backward compatibility with older frontend builds —
+// now just delegates to the same authenticated, normalized lookup as
+// /search (see patient.controller.searchByPhone). Do not use this in new
+// code; call /patient/search instead.
+router.get(
+  "/search-by-phone",
+  authMiddleware,
+  roleMiddleware("RECEPTIONIST", "CLINIC"),
+  patientController.searchByPhone
+);
 
 export default router;

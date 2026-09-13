@@ -1,7 +1,6 @@
 import asyncHandler from "../../utils/asyncHandler.js";
 import ApiResponse from "../../utils/apiResponse.js";
 import * as patientService from "./patient.service.js";
-import prisma from "../../config/db.config.js";
 import {
   searchPatientSchema,
   createGuestPatientSchema,
@@ -38,27 +37,20 @@ export const updateMyProfile = asyncHandler(async (req, res) => {
   res.status(200).json(new ApiResponse(true, "Profile updated successfully", { patient }));
 });
 
+// NOTE: this used to run its own ad-hoc, unauthenticated query directly
+// against the User table (unnormalized phone, no fallback to guest patients
+// whose phone lives on the Patient row). That's why some clinics saw "no
+// patient found" for people who actually did have a record — this endpoint
+// disagreed with the canonical /patient/search route. It's now a thin,
+// backward-compatible alias for the same vetted, normalized lookup so every
+// screen in the app gets identical, correct results.
 export const searchByPhone = asyncHandler(async (req, res) => {
   const { phone } = req.query;
-  
+
   if (!phone) {
     return res.status(400).json(new ApiResponse(false, "Phone number is required"));
   }
 
-  // Assuming your database has a 'user' table that links to 'patient' role
-  const patientUser = await prisma.user.findFirst({
-    where: { 
-      phone: phone, 
-      role: "PATIENT" 
-    },
-    include: {
-      patient: true // Adjust this include based on your Prisma schema (e.g., patientProfile, patient, etc.)
-    }
-  });
-
-  if (!patientUser) {
-    return res.status(200).json(new ApiResponse(true, "No patient found", { patient: null }));
-  }
-
-  res.status(200).json(new ApiResponse(true, "Patient found", { patient: patientUser }));
+  const patient = await patientService.searchPatientByPhone(phone);
+  res.status(200).json(new ApiResponse(true, patient ? "Patient found" : "No patient found", { patient }));
 });

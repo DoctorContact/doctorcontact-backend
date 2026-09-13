@@ -37,58 +37,84 @@ export const findPatientById = (id) => {
 // the name/gender typed in NOW differs from what's on file, the existing
 // record gets updated in place (receptionist correcting a typo, patient's
 // name changed, etc.) rather than silently keeping the old value.
-export const createGuestPatient = async ({ name, phone, gender }) => {
-  return prisma.$transaction(async (tx) => {
-    // Patient.phone is unique system-wide (a patient's identity isn't
-    // per-clinic), so if this phone is already a Patient anywhere, reuse it
-    // instead of trying to insert a second row and hitting the unique
-    // constraint. Appointments/queues stay clinic-scoped separately.
-    const existing = phone
-      ? await tx.patient.findUnique({
-          where: { phone },
+export const createGuestPatient = async ({ name, phone, gender, dob, age }) => {
+  const run = () =>
+    prisma.$transaction(async (tx) => {
+      // Patient.phone is unique system-wide (a patient's identity isn't
+      // per-clinic), so if this phone is already a Patient anywhere, reuse it
+      // instead of trying to insert a second row and hitting the unique
+      // constraint. Appointments/queues stay clinic-scoped separately.
+      const existing = phone
+        ? await tx.patient.findUnique({
+            where: { phone },
+            include: { user: { select: { id: true, name: true, email: true, phone: true } } },
+          })
+        : null;
+
+      if (existing) {
+        const nameChanged = name && name !== existing.name;
+        const genderChanged = gender && gender !== existing.gender;
+        const dobChanged = dob && new Date(dob).toDateString() !== (existing.dob ? new Date(existing.dob).toDateString() : "");
+        const ageChanged = age != null && age !== existing.age;
+        if (!nameChanged && !genderChanged && !dobChanged && !ageChanged) return existing;
+
+        if (nameChanged && existing.userId) {
+          await tx.user.update({ where: { id: existing.userId }, data: { name } });
+        }
+
+        return tx.patient.update({
+          where: { id: existing.id },
+          data: {
+            name: nameChanged ? name : undefined,
+            gender: genderChanged ? gender : undefined,
+            dob: dobChanged ? new Date(dob) : undefined,
+            age: ageChanged ? age : undefined,
+          },
           include: { user: { select: { id: true, name: true, email: true, phone: true } } },
-        })
-      : null;
-
-    if (existing) {
-      const nameChanged = name && name !== existing.name;
-      const genderChanged = gender && gender !== existing.gender;
-      if (!nameChanged && !genderChanged) return existing;
-
-      if (nameChanged && existing.userId) {
-        await tx.user.update({ where: { id: existing.userId }, data: { name } });
+        });
       }
 
-      return tx.patient.update({
-        where: { id: existing.id },
-        data: {
-          name: nameChanged ? name : undefined,
-          gender: genderChanged ? gender : undefined,
-        },
+      let user = phone ? await tx.user.findUnique({ where: { phone } }) : null;
+
+      if (!user) {
+        user = await tx.user.create({
+          data: {
+            name,
+            phone,
+            role: "PATIENT",
+            password: null,
+            isVerified: false, // phone hasn't been OTP-verified by the patient themself yet
+            selfRegistered: false,
+          },
+        });
+      }
+
+      return tx.patient.create({
+        data: { userId: user.id, name, phone, gender, dob: dob ? new Date(dob) : undefined, age },
         include: { user: { select: { id: true, name: true, email: true, phone: true } } },
       });
-    }
-
-    let user = phone ? await tx.user.findUnique({ where: { phone } }) : null;
-
-    if (!user) {
-      user = await tx.user.create({
-        data: {
-          name,
-          phone,
-          role: "PATIENT",
-          password: null,
-          isVerified: false, // phone hasn't been OTP-verified by the patient themself yet
-          selfRegistered: false,
-        },
-      });
-    }
-
-    return tx.patient.create({
-      data: { userId: user.id, name, phone, gender },
-      include: { user: { select: { id: true, name: true, email: true, phone: true } } },
     });
-  });
+
+  try {
+    return await run();
+  } catch (error) {
+    // Two receptionists/clinics booking the SAME brand-new phone number at
+    // almost the same moment can both pass the "does this phone exist yet?"
+    // check before either has committed, and one of the two inserts then
+    // hits the unique constraint on Patient.phone / User.phone (P2002).
+    // Previously this bubbled up as a raw 500 and the second person's
+    // booking failed outright even though the account genuinely was created
+    // — just by the other request. Instead, re-read whichever record won
+    // the race and hand it back so the booking can proceed normally.
+    if (error.code === "P2002" && phone) {
+      const winner = await prisma.patient.findUnique({
+        where: { phone },
+        include: { user: { select: { id: true, name: true, email: true, phone: true } } },
+      });
+      if (winner) return winner;
+    }
+    throw error;
+  }
 };
 
 export const updatePatientProfile = (userId, { name, dob, gender, bloodGroup }) => {

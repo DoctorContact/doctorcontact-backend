@@ -162,7 +162,20 @@ model Patient {
   dob         DateTime?
   gender      String?
   bloodGroup  String?
-  
+  // Added by migration 20260719183227_add_appointment_queue_system, but
+  // never declared here — the column has existed in the database this
+  // whole time, just invisible to Prisma Client, which is why reception
+  // "age" input was silently dropped instead of being saved.
+  age         Int?
+  // Added by migration 20260912132039_add_patient_booking_restriction, but
+  // never declared here — every booking call selects/reads this field
+  // (getPatientRestrictionStatus / setPatientBookingRestriction), so without
+  // it in the schema the generated Prisma Client doesn't know the column
+  // exists and EVERY booking (self, reception, walk-in) fails with
+  // "Unknown field `bookingRestrictedUntil`". Run `npx prisma generate`
+  // after pulling this so the client picks it up.
+  bookingRestrictedUntil DateTime?
+
   user        User?    @relation(fields: [userId], references: [id])
   appointments Appointment[]
   reviews              Review[]

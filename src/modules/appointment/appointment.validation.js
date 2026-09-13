@@ -25,6 +25,12 @@ export const bookReceptionAppointmentSchema = z.object({
   newPatient: z.object({
     name: z.string(),
     phone: z.string(),
+    gender: z.enum(["MALE", "FEMALE", "OTHER"]).optional(),
+    // Patient.age is a real column (see prisma/schema.prisma) — stored
+    // directly, no conversion needed. `dob` is accepted too for callers
+    // that have an exact birthdate instead of just an age.
+    age: z.coerce.number().int().positive().max(150).optional(),
+    dob: z.string().optional(),
   }).optional(),
   bookingSource: z.enum(["RECEPTION", "WALK_IN", "PHONE"]).optional(),
 }).refine(data => data.patientId || data.newPatient, {

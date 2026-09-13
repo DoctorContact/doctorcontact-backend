@@ -20,6 +20,8 @@ export const searchPatientByPhone = async (phone) => {
     phone: patient.user?.phone || patient.phone,
     email: patient.user?.email || null,
     gender: patient.gender,
+    age: patient.age,
+    dob: patient.dob,
     hasVerifiedAccount: !!patient.user?.id,
   };
 };

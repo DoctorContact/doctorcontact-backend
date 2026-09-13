@@ -45,6 +45,11 @@ import { computeQueueView } from "./appointment.helper.js";
 
 const DAY_NAMES = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
 
+// Reception only ever asks for "age" as a whole number, not a birthdate.
+// The Patient table has a real `age` column (added by an old migration but
+// left off schema.prisma until now — see prisma/schema.prisma), so it's
+// stored directly rather than approximated into a dob.
+
 const getPatientByUserId = (userId) => {
   return prisma.patient.findUnique({ where: { userId } });
 };
@@ -98,10 +103,17 @@ export const bookReceptionAppointment = async (
   let finalPatientId = patientId;
 
   if (!finalPatientId && newPatient) {
+    // Account creation happens right here, synchronously, inside the same
+    // request as the booking itself — there is no separate/delayed step and
+    // no extra round trip for the clinic to wait on. createGuestPatient is
+    // also race-safe (see patient.repository.js) so two front-desk staff
+    // adding the same brand-new number at once can't make this call fail.
     const patient = await createGuestPatient({
       name: newPatient.name,
       phone: normalizePhone(newPatient.phone),
       gender: newPatient.gender,
+      age: newPatient.age,
+      dob: newPatient.dob,
     });
     finalPatientId = patient.id;
   } else if (finalPatientId) {
