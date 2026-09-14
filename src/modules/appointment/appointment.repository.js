@@ -21,8 +21,6 @@ export const searchDoctors = async ({ q, doctorName, clinicName, clinicId, city,
     where.clinic = { ...where.clinic, city: { contains: city, mode: "insensitive" } };
   }
 
-  // Single search-box mode: match doctor name, specialization, qualification,
-  // clinic name, city, or address — whichever field the text matches.
   if (q) {
     where.OR = [
       { user: { name: { contains: q, mode: "insensitive" } } },
@@ -44,9 +42,6 @@ export const searchDoctors = async ({ q, doctorName, clinicName, clinicId, city,
   });
 
   if (date) {
-    // Queues are now per-session (unique on doctor+clinic+date+scheduleId), so a
-    // doctor can have several queues on one date. Aggregate them into a single
-    // day summary rather than looking up the removed doctorId_clinicId_date key.
     const doctorsWithQueue = await Promise.all(
       doctors.map(async (doctor) => {
         if (!doctor.clinicId) return { ...doctor, todayQueue: null };
@@ -69,8 +64,6 @@ export const searchDoctors = async ({ q, doctorName, clinicName, clinicId, city,
   return doctors;
 };
 
-// Returns every clinic a doctor can currently be booked at: their primary clinic
-// plus any clinic where they have an APPROVED association.
 export const getBookableClinicsForDoctor = async (doctorId) => {
   const doctor = await prisma.doctor.findUnique({ where: { id: doctorId } });
   if (!doctor) return [];
@@ -101,7 +94,7 @@ export const findOrCreateQueue = async (doctorId, clinicId, date, scheduleId) =>
       doctorId,
       clinicId,
       date: new Date(date),
-      scheduleId, // Bind Queue to specific session
+      scheduleId,
       status: "OPEN",
       currentToken: 0,
       lastTokenIssued: 0,
@@ -120,11 +113,6 @@ export const getDoctorScheduleById = (scheduleId) => {
   return prisma.doctorSchedule.findUnique({ where: { id: scheduleId } });
 };
 
-// Rule: a patient shouldn't end up with two active appointments too close
-// together in time on the same day — whether that's the same doctor twice,
-// or two different doctors whose sessions overlap/nearly-overlap. Returns
-// the conflicting appointment (with its schedule + doctor name) if one
-// exists, so the caller can give a clear error.
 export const findConflictingAppointmentForPatient = async ({
   patientId,
   date,
@@ -165,23 +153,18 @@ export const findConflictingAppointmentForPatient = async ({
 };
 
 export const createAppointmentWithToken = async ({ doctorId, clinicId, patientId, queueId, scheduleId, date, bookingSource }) => {
-  // Use a Serializable transaction to ensure capacity is strictly enforced (Rule 22)
   return prisma.$transaction(async (tx) => {
     const queue = await tx.queue.findUnique({
       where: { id: queueId },
-      include: { schedule: true } // Bring in schedule to check maxPatients
+      include: { schedule: true }
     });
 
     if (!queue) throw new ApiError(404, "Queue not found");
     if (queue.status === "CLOSED") throw new ApiError(400, "Queue is closed for this session");
 
-    // === CAPACITY CHECK (STEP 6) ===
     const schedule = queue.schedule;
     if (!schedule) throw new ApiError(500, "Queue is missing schedule attachment");
 
-    // A one-off exception for THIS date can override the recurring maxPatients
-    // (Step 13) — check it inside the same transaction so it's as safe against
-    // races as the count below.
     const exception = await tx.scheduleException.findUnique({
       where: { scheduleId_date: { scheduleId: schedule.id, date: new Date(date) } },
     });
@@ -189,14 +172,12 @@ export const createAppointmentWithToken = async ({ doctorId, clinicId, patientId
       throw new ApiError(400, "This session has been cancelled for this date");
     }
 
-    // Default capacity is 20 if somehow missing
     const maxCapacity = exception?.overrideMaxPatients ?? schedule.maxPatients ?? 20;
 
-    // Count currently ACTIVE appointments in this queue
     const activeAppointmentsCount = await tx.appointment.count({
       where: {
         queueId,
-        status: { in: ["WAITING", "CHECKED_IN"] } // Cancelled/Completed don't consume future booking space
+        status: { in: ["WAITING", "CHECKED_IN"] }
       }
     });
 
@@ -204,11 +185,6 @@ export const createAppointmentWithToken = async ({ doctorId, clinicId, patientId
       throw new ApiError(409, `This session is full (Capacity: ${maxCapacity}/${maxCapacity}). Please select another session.`);
     }
 
-    // Part 5/6: re-check the patient's active-appointment cap INSIDE the same
-    // serializable transaction as the capacity check above. The service-layer
-    // check before this transaction is a fast-fail for the normal case; this
-    // one closes the race where two booking requests for the same patient
-    // pass that check concurrently.
     const patientActiveCount = await tx.appointment.count({
       where: { patientId, status: { in: ["WAITING", "CHECKED_IN"] } },
     });
@@ -219,7 +195,6 @@ export const createAppointmentWithToken = async ({ doctorId, clinicId, patientId
       );
     }
 
-    // === QUEUE/SERIAL GENERATION (STEP 11) ===
     const newToken = queue.lastTokenIssued + 1;
 
     const appointment = await tx.appointment.create({
@@ -240,8 +215,18 @@ export const createAppointmentWithToken = async ({ doctorId, clinicId, patientId
       data: { lastTokenIssued: newToken },
     });
 
-    return { appointment, queue: updatedQueue };
-  }, { isolationLevel: 'Serializable' }); // Strict protection against concurrent bookings
+    // Display count for the broadcast payload — deliberately includes
+    // COMPLETED (a seen patient still occupied a booking slot today),
+    // unlike activeAppointmentsCount above which excludes it (that one only
+    // cares about capacity still in use). Computed here, in the same
+    // transaction/snapshot as the write above, so there's no window for a
+    // concurrent cancel/complete to make the broadcast figure stale.
+    const currentBookingsCount = await tx.appointment.count({
+      where: { queueId, status: { in: ["WAITING", "CHECKED_IN", "COMPLETED"] } },
+    });
+
+    return { appointment, queue: updatedQueue, currentBookingsCount };
+  }, { isolationLevel: 'Serializable' });
 };
 
 export const findAppointmentsForPatient = (patientId) => {
@@ -263,7 +248,6 @@ export const findAppointmentById = (id) => {
   });
 };
 
-// stop queeue system if not need
 export const getQueueModeForDoctorClinic = async (doctorId, clinicId) => {
   const doctor = await prisma.doctor.findUnique({ where: { id: doctorId } });
   if (!doctor) return "LIVE";
@@ -294,7 +278,6 @@ export const getHolidayForClinicDate = (clinicId, date) => {
   });
 };
 
-
 export const getConsultationMinutesForDoctorClinic = async (doctorId, clinicId) => {
   const doctor = await prisma.doctor.findUnique({ where: { id: doctorId } });
   if (!doctor) return null;
@@ -314,9 +297,6 @@ export const findAppointmentByIdFull = (id) => {
   });
 };
 
-// Part 13/21: everything needed to render a single appointment's live-queue
-// card in one query — the appointment itself, its queue (current token,
-// status), and the doctor/clinic names.
 export const findAppointmentForLiveView = (id) => {
   return prisma.appointment.findUnique({
     where: { id },
@@ -342,8 +322,6 @@ export const getDoctorLeaveForDate = (doctorId, clinicId, date) => {
   });
 };
 
-// Part 5/6: count this patient's currently ACTIVE (not completed/cancelled/
-// absent) appointments. Only WAITING/CHECKED_IN count toward the cap.
 export const countActiveAppointmentsForPatient = (patientId) => {
   return prisma.appointment.count({
     where: { patientId, status: { in: ["WAITING", "CHECKED_IN"] } },
@@ -364,26 +342,33 @@ export const setPatientBookingRestriction = (patientId, restrictedUntil) => {
   });
 };
 
-// Part 14: number of ACTIVE (WAITING/CHECKED_IN) tokens strictly between the
-// queue's current token and this patient's token — this is the correct
-// "patients ahead" count, excluding cancelled/absent/completed tokens that
-// happen to fall in that numeric range.
+// Part 14: the appointment sitting at currentToken is still being
+// consulted (CHECKED_IN) until "Next" is pressed again — it has NOT
+// finished yet, so it must count as one of the people ahead for every
+// patient behind it. Using `gte: currentToken` (not `gt`) includes it, and
+// the early-return below only short-circuits when patientToken is at or
+// behind currentToken (already passed) — NOT at currentToken + 1, since
+// that's exactly the immediate-next patient who DOES have one person
+// (whoever's currently being served) ahead of them.
 export const countActiveTokensAhead = (queueId, currentToken, patientToken) => {
-  if (patientToken <= currentToken) return Promise.resolve(0);
+  if (patientToken <= currentToken) {
+    return Promise.resolve(0);
+  }
+
   return prisma.appointment.count({
     where: {
       queueId,
-      token: { gt: currentToken, lt: patientToken },
-      status: { in: ["WAITING", "CHECKED_IN"] },
+      token: {
+        gte: currentToken,
+        lt: patientToken,
+      },
+      status: {
+        in: ["WAITING", "CHECKED_IN"],
+      },
     },
   });
 };
 
-// Part 10/11: all appointments belonging to ONE clinic, with optional
-// filters. clinicId is always required and always comes from the
-// authenticated user's own clinic — callers must never accept it from the
-// request body/query for a different clinic (see clinic isolation checks
-// in appointment.service.js).
 export const findAppointmentsForClinic = (clinicId, { doctorId, status, date, patientId, from, to } = {}) => {
   const where = { clinicId };
   if (doctorId) where.doctorId = doctorId;
@@ -406,4 +391,3 @@ export const findAppointmentsForClinic = (clinicId, { doctorId, status, date, pa
     orderBy: [{ date: "desc" }, { token: "asc" }],
   });
 };
-

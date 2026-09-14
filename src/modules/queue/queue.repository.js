@@ -35,9 +35,16 @@ export const setCurrentToken = (queueId, currentToken) => {
   return prisma.queue.update({ where: { id: queueId }, data: { currentToken } });
 };
 
-export const findAppointmentByToken = (doctorId, clinicId, date, token) => {
+// FIX: the appointment's real unique constraint is [queueId, token] (see
+// prisma/schema.prisma) — a doctorId_clinicId_date_token key does not exist
+// on this model at all (queues are scoped per scheduleId, so multiple
+// queues/sessions can share a doctor+clinic+date, each restarting token at
+// 1). Calling this with the old key would throw a Prisma "unknown argument"
+// error the moment it was ever invoked.
+export const findAppointmentByToken = (queueId, token) => {
   return prisma.appointment.findUnique({
-    where: { doctorId_clinicId_date_token: { doctorId, clinicId, date: new Date(date), token } },
+    where: { queueId_token: { queueId, token } },
+    include: { patient: true },
   });
 };
 

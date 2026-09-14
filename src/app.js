@@ -47,10 +47,22 @@ import followupRoutes from "./modules/followup/followup.routes.js";
 
 const app = express();
 
+const allowedOrigins = env.CLIENT_URL
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
 app.use(helmet({ contentSecurityPolicy: false }));
+
 app.use(
   cors({
-    origin: env.CLIENT_URL,
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error(`CORS blocked: ${origin}`));
+      }
+    },
     credentials: true,
   })
 );

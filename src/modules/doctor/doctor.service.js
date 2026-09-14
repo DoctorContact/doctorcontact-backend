@@ -25,11 +25,13 @@ import {
   updateAssociationAvgConsultation,
   updateDoctorProfilePhoto,
   searchDoctorsAdvancedDB,
+  upsertDoctorDailyStatus,
 } from "./doctor.repository.js";
 import { findConflict } from "./schedule.helper.js";
 import { emitDoctorDelay } from "../../sockets/queue.socket.js";
 import { emitLiveDoctorsChanged } from "../../sockets/doctor.socket.js";
-import { findReceptionistAssignment } from "../queue/queue.repository.js";
+import { findReceptionistAssignment, findAppointmentByToken } from "../queue/queue.repository.js";
+import { APPROACH_THRESHOLD } from "../queue/queue.constants.js";
 import { emitAppointmentNotification } from "../../sockets/notification.socket.js";
 import { uploadBufferToCloudinary, deleteFromCloudinary } from "../../utils/cloudinaryUpload.js";
 import { evaluateDoctorStatus } from "./doctor.helper.js";
@@ -319,15 +321,29 @@ export const updateConsultationTime = async (user, doctorId, clinicId, minutes) 
   return updateAssociationAvgConsultation(association.id, minutes);
 };
 
-const notifyApproaching = async (doctorId, clinicId, date, currentToken) => {
+// Step 3 (wired into queue.service.js:nextToken): tells a patient a few
+// tokens ahead of the one just called that their turn is approaching.
+// queueId (not doctorId/clinicId/date) is what actually identifies a
+// session now that queues are scoped per scheduleId — see
+// findAppointmentByToken's fix in queue.repository.js.
+export const notifyApproaching = async (queueId, currentToken) => {
   const targetToken = currentToken + APPROACH_THRESHOLD;
-  const upcoming = await findAppointmentByToken(doctorId, clinicId, date, targetToken);
-  if (upcoming) {
+  const upcoming = await findAppointmentByToken(queueId, targetToken);
+  if (upcoming && ["WAITING", "CHECKED_IN"].includes(upcoming.status)) {
     emitAppointmentNotification(upcoming.id, {
       type: "APPROACHING",
       message: `Your turn is approaching — ${APPROACH_THRESHOLD} patient(s) ahead of you.`,
       token: upcoming.token,
     });
+    if (upcoming.patient?.userId) {
+      await notifyUser({
+        userId: upcoming.patient.userId,
+        type: "GENERAL",
+        title: "Your Turn Is Approaching",
+        message: `${APPROACH_THRESHOLD} patient(s) ahead of you — please be ready.`,
+        meta: { appointmentId: upcoming.id, token: upcoming.token, queueId },
+      });
+    }
   }
 };
 
