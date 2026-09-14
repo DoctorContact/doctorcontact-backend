@@ -1,5 +1,5 @@
 import ApiError from "../../utils/apiError.js";
-import redisClient from "../../config/redis.config.js"; // 🟢 Fixed import
+import redisClient from "../../config/redis.config.js";
 import { normalizePhone } from "../../utils/phoneNormalizer.js";
 import { findPatientByPhone } from "../patient/patient.repository.js";
 import {
@@ -20,10 +20,7 @@ import {
   verifyRefreshToken,
 } from "../../utils/tokenGenerator.js";
 import { OTP_EXPIRY_SECONDS, OTP_PREFIX } from "./auth.constants.js";
-import { sendEmail } from "../../utils/emailService.js"
-import { verifyFirebasePhoneToken } from "../../config/firebase.config.js";
-
-
+import { sendEmail } from "../../utils/emailService.js";
 
 export const registerUser = async ({ name, email, password, phone, dob }) => {
   const existingUser = await findUserByEmail(email);
@@ -65,14 +62,10 @@ export const loginUser = async ({ email, phone, password }) => {
   return { user: sanitizeUser(user), ...tokens };
 };
 
-// patientPhoneAuth function update koro
-export const patientPhoneAuth = async ({ idToken, name }) => {
-  // 1. Firebase theke idToken verify kore phone number ber kora
-  const rawPhone = await verifyFirebasePhoneToken(idToken); 
-  const phone = normalizePhone(rawPhone);
-
-  // 2. Existing user check kora
-  let user = await findUserByPhone(phone);
+// 🟢 Firebase idToken এর বদলে সরাসরি phone ব্যবহার করা হলো
+export const patientPhoneAuth = async ({ phone, name }) => {
+  const normalizedPhone = normalizePhone(phone);
+  let user = await findUserByPhone(normalizedPhone);
 
   if (user) {
     if (user.role !== "PATIENT") {
@@ -85,13 +78,12 @@ export const patientPhoneAuth = async ({ idToken, name }) => {
     return { user: sanitizeUser(user), ...tokens, isNewAccount: false };
   }
 
-  // 3. Notun user toiri kora
-  const existingPatient = await findPatientByPhone(phone);
+  const existingPatient = await findPatientByPhone(normalizedPhone);
   const guestPatientId = existingPatient && !existingPatient.userId ? existingPatient.id : null;
 
   if (!name) throw new ApiError(400, "Name is required to create a new account");
 
-  user = await createPhoneVerifiedPatient({ phone, name, guestPatientId });
+  user = await createPhoneVerifiedPatient({ phone: normalizedPhone, name, guestPatientId });
   const tokens = await issueTokens(user);
   return { user: sanitizeUser(user), ...tokens, isNewAccount: true };
 };
@@ -122,7 +114,6 @@ export const forgotPassword = async (email) => {
   if (!user.selfRegistered) throw new ApiError(403, "Cannot self-reset password");
 
   const otp = generateOtp();
-  // 🟢 Fixed Redis syntax for v4
   await redisClient.setEx(`${OTP_PREFIX}${email}`, OTP_EXPIRY_SECONDS, otp);
 
   await sendEmail({
@@ -133,7 +124,6 @@ export const forgotPassword = async (email) => {
 };
 
 export const resetPassword = async ({ email, otp, newPassword }) => {
-  // 🟢 Fixed Redis variable name
   const storedOtp = await redisClient.get(`${OTP_PREFIX}${email}`);
   if (!storedOtp || storedOtp !== otp) throw new ApiError(400, "Invalid or expired OTP");
 

@@ -8,7 +8,7 @@ const router = Router();
 
 router.post("/login", authLimiter, authController.login);
 
-// Ekhane Firebase er route-ta replace kora holo
+// Phone Auth & OTP Routes
 router.post("/send-otp", otpLimiter, authController.requestOtp);
 router.post("/verify-otp", authLimiter, authController.verifyOtp);
 
@@ -18,6 +18,5 @@ router.post("/reset-password", otpLimiter, authController.resetPassword);
 router.post("/reset-password/phone", otpLimiter, authController.resetPasswordByPhone);
 router.post("/logout", authMiddleware, authController.logout);
 router.get("/me", authMiddleware, authController.getMe);
-router.post("/patient/phone", authLimiter, authController.patientPhoneAuth);
 
 export default router;
