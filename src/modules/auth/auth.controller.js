@@ -5,6 +5,7 @@ import redisClient from "../../config/redis.config.js";
 import { sendOTP } from "./otp.service.js";
 import ApiError from "../../utils/apiError.js";
 import { generateOtp } from "./auth.helper.js";
+import { normalizePhone } from "../../utils/phoneNormalizer.js";
 
 import {
   registerSchema,
@@ -16,16 +17,10 @@ import {
 } from "./auth.validation.js";
 
 import * as authService from "./auth.service.js";
-
-import {
-  generateAccessToken,
-  generateRefreshToken,
-} from "../../utils/tokenGenerator.js";
-
-import { updateRefreshToken } from "./auth.repository.js";
+import { findUserByPhone, updateRefreshToken } from "./auth.repository.js";
+import { generateAccessToken, generateRefreshToken } from "../../utils/tokenGenerator.js";
 import { hashToken } from "./auth.helper.js";
 
-// ==================== GOOGLE CALLBACK ====================
 export const googleCallback = asyncHandler(async (req, res) => {
   const user = req.user;
   const payload = { id: user.id, role: user.role, email: user.email };
@@ -37,35 +32,27 @@ export const googleCallback = asyncHandler(async (req, res) => {
   res.redirect(`${process.env.CLIENT_URL}/oauth-success?accessToken=${accessToken}`);
 });
 
-// ==================== REGISTER ====================
 export const register = asyncHandler(async (req, res) => {
   const data = registerSchema.parse(req.body);
   const user = await authService.registerUser(data);
-
   res.status(201).json(new ApiResponse(true, "User registered successfully", { user }));
 });
 
-// ==================== LOGIN ====================
 export const login = asyncHandler(async (req, res) => {
   const data = loginSchema.parse(req.body);
   const { user, accessToken, refreshToken } = await authService.loginUser(data);
-
   res.cookie("refreshToken", refreshToken, COOKIE_OPTIONS);
   res.status(200).json(new ApiResponse(true, "Login successful", { user, accessToken, refreshToken }));
 });
 
-// ==================== REFRESH TOKEN ====================
 export const refresh = asyncHandler(async (req, res) => {
   let incomingRefreshToken = req.cookies?.refreshToken || req.body?.refreshToken;
-
   if (!incomingRefreshToken && req.headers.authorization && req.headers.authorization.startsWith("Bearer ")) {
       incomingRefreshToken = req.headers.authorization.split(" ")[1];
   }
-
   if (!incomingRefreshToken) {
     return res.status(401).json(new ApiResponse(false, "Refresh token is required"));
   }
-
   try {
     const { user, accessToken, refreshToken } = await authService.refreshTokens(incomingRefreshToken);
     res.cookie("refreshToken", refreshToken, COOKIE_OPTIONS);
@@ -76,80 +63,92 @@ export const refresh = asyncHandler(async (req, res) => {
   }
 });
 
-// ==================== LOGOUT ====================
 export const logout = asyncHandler(async (req, res) => {
   await authService.logoutUser(req.user.id);
   res.clearCookie("refreshToken", COOKIE_OPTIONS);
   res.status(200).json(new ApiResponse(true, "Logged out successfully"));
 });
 
-// ==================== FORGOT PASSWORD ====================
 export const forgotPassword = asyncHandler(async (req, res) => {
   const { email } = forgotPasswordSchema.parse(req.body);
   await authService.forgotPassword(email);
   res.status(200).json(new ApiResponse(true, "If that email exists, an OTP has been sent"));
 });
 
-// ==================== RESET PASSWORD ====================
 export const resetPassword = asyncHandler(async (req, res) => {
   const data = resetPasswordSchema.parse(req.body);
   await authService.resetPassword(data);
   res.status(200).json(new ApiResponse(true, "Password reset successfully"));
 });
 
-// ==================== RESET PASSWORD (PHONE) ====================
-// 🟢 Firebase এর বদলে Redis থেকে OTP ভেরিফাই করে পাসওয়ার্ড রিসেট
 export const resetPasswordByPhone = asyncHandler(async (req, res) => {
   const { phone, otp, newPassword } = resetPasswordByPhoneSchema.parse(req.body);
-
-  const storedOtp = await redisClient.get(`OTP:${phone}`);
+  const normalizedPhone = normalizePhone(phone);
+  
+  const storedOtp = await redisClient.get(`OTP:${normalizedPhone}`);
   if (!storedOtp || storedOtp !== otp) {
     throw new ApiError(400, "Invalid or expired OTP");
   }
-
-  await redisClient.del(`OTP:${phone}`);
-  await authService.resetPasswordByPhone({ phone, newPassword });
-
+  await redisClient.del(`OTP:${normalizedPhone}`);
+  await authService.resetPasswordByPhone({ phone: normalizedPhone, newPassword });
   res.status(200).json(new ApiResponse(true, "Password reset successfully"));
 });
 
-// ==================== GET CURRENT USER ====================
 export const getMe = asyncHandler(async (req, res) => {
   res.status(200).json(new ApiResponse(true, "Current user fetched", { user: req.user }));
 });
 
-// ==================== OTP SEND (APITXT) ====================
+// ==================== OTP SEND (APITXT + 5 MIN COOLDOWN) ====================
 export const requestOtp = asyncHandler(async (req, res) => {
   const { phone } = req.body;
   if (!phone) {
     return res.status(400).json(new ApiResponse(false, "Phone number is required"));
   }
 
-  const otp = generateOtp(); // helper থেকে আনা হয়েছে
-  await redisClient.setEx(`OTP:${phone}`, 300, otp); // ৫ মিনিট ভ্যালিড
+  const normalizedPhone = normalizePhone(phone);
+
+  // 5 Min Cooldown Check
+  const cooldown = await redisClient.get(`OTP_COOLDOWN:${normalizedPhone}`);
+  if (cooldown) {
+    const ttl = await redisClient.ttl(`OTP_COOLDOWN:${normalizedPhone}`);
+    const minutes = Math.floor(ttl / 60);
+    const seconds = ttl % 60;
+    throw new ApiError(429, `Please wait ${minutes}m ${seconds}s before requesting a new OTP.`);
+  }
+
+  const existingUser = await findUserByPhone(normalizedPhone);
+  const isNewUser = !existingUser;
+
+  const otp = generateOtp(); 
+  await redisClient.setEx(`OTP:${normalizedPhone}`, 300, otp); // OTP valid for 5 mins
+  await redisClient.setEx(`OTP_COOLDOWN:${normalizedPhone}`, 300, "locked"); // Block resend for 5 mins
   
-  const isSent = await sendOTP(phone, otp);
+  const isSent = await sendOTP(normalizedPhone, otp);
 
   if (!isSent) {
-    await redisClient.del(`OTP:${phone}`);
+    await redisClient.del(`OTP:${normalizedPhone}`);
+    await redisClient.del(`OTP_COOLDOWN:${normalizedPhone}`);
     throw new ApiError(500, "Failed to send OTP. Service unavailable.");
   }
 
-  res.status(200).json(new ApiResponse(true, "OTP sent successfully"));
+  res.status(200).json(new ApiResponse(true, "OTP sent successfully", { isNewUser }));
 });
 
-// ==================== OTP VERIFY & LOGIN (PATIENT) ====================
+// ==================== OTP VERIFY & LOGIN ====================
 export const verifyOtp = asyncHandler(async (req, res) => {
   const { phone, otp, name } = patientPhoneAuthSchema.parse(req.body);
+  const normalizedPhone = normalizePhone(phone);
 
-  const storedOtp = await redisClient.get(`OTP:${phone}`);
+  const storedOtp = await redisClient.get(`OTP:${normalizedPhone}`);
   if (!storedOtp || storedOtp !== otp) {
     throw new ApiError(400, "Invalid or expired OTP");
   }
 
-  await redisClient.del(`OTP:${phone}`);
+  const { user, accessToken, refreshToken, isNewAccount } = await authService.patientPhoneAuth({ phone: normalizedPhone, name });
 
-  const { user, accessToken, refreshToken, isNewAccount } = await authService.patientPhoneAuth({ phone, name });
+  // Only delete OTP after successful verification
+  await redisClient.del(`OTP:${normalizedPhone}`);
+  await redisClient.del(`OTP_COOLDOWN:${normalizedPhone}`);
 
   res.cookie("refreshToken", refreshToken, COOKIE_OPTIONS);
 

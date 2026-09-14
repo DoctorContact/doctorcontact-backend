@@ -117,15 +117,23 @@ export const createGuestPatient = async ({ name, phone, gender, dob, age }) => {
   }
 };
 
+// 🟢 পেশেন্ট যখন নিজে নিজের প্রোফাইল আপডেট করবে
 export const updatePatientProfile = (userId, { name, dob, gender, bloodGroup }) => {
   return prisma.$transaction(async (tx) => {
+    // ১. User টেবিলে নাম আপডেট
     if (name) {
       await tx.user.update({ where: { id: userId }, data: { name } });
     }
 
+    // ২. Patient টেবিলেও নাম এবং অন্যান্য ডিটেইলস আপডেট
     const patient = await tx.patient.update({
       where: { userId },
-      data: { dob: dob ? new Date(dob) : undefined, gender, bloodGroup },
+      data: { 
+        name: name ? name : undefined, // 🟢 পেশেন্ট নিজে নাম চেঞ্জ করতে পারবে
+        dob: dob ? new Date(dob) : undefined, 
+        gender, 
+        bloodGroup 
+      },
     });
 
     return patient;
