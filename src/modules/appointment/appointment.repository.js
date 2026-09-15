@@ -65,12 +65,16 @@ export const searchDoctors = async ({ q, doctorName, clinicName, clinicId, city,
 };
 
 export const getBookableClinicsForDoctor = async (doctorId) => {
-  const doctor = await prisma.doctor.findUnique({ where: { id: doctorId } });
+  // doctor + associations are independent reads (both only need doctorId),
+  // so fire them together instead of awaiting one before starting the next —
+  // was 2 sequential round trips, now 1 round-trip's worth of latency.
+  const [doctor, approvedAssociations] = await Promise.all([
+    prisma.doctor.findUnique({ where: { id: doctorId } }),
+    prisma.doctorClinicAssociation.findMany({
+      where: { doctorId, status: "APPROVED" },
+    }),
+  ]);
   if (!doctor) return [];
-
-  const approvedAssociations = await prisma.doctorClinicAssociation.findMany({
-    where: { doctorId, status: "APPROVED" },
-  });
 
   return [doctor.clinicId, ...approvedAssociations.map((a) => a.clinicId)];
 };

@@ -250,6 +250,10 @@ model Appointment {
   followups           Followup[]
 
   @@unique([queueId, token])
+  @@index([patientId, status])
+  @@index([queueId, status])
+  @@index([doctorId, clinicId, date])
+  @@index([clinicId, date])
   @@map("appointments")
 }
 

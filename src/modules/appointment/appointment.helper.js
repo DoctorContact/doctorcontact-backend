@@ -37,3 +37,68 @@ export const computeQueueView = ({
     estimatedWaitLabel: consultationMinutes ? formatWaitEstimate(minutes) : null,
   };
 };
+
+
+const findConflictingAppointmentForPatientTx = async (
+  tx,
+  {
+    patientId,
+    date,
+    scheduleStartTime,
+    excludeDoctorId,
+  }
+) => {
+  const active = await tx.appointment.findMany({
+    where: {
+      patientId,
+      date: new Date(date),
+      status: {
+        in: ["WAITING", "CHECKED_IN"],
+      },
+    },
+    include: {
+      queue: {
+        include: {
+          schedule: true,
+        },
+      },
+      doctor: {
+        include: {
+          user: {
+            select: {
+              name: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  const [newH, newM] = scheduleStartTime.split(":").map(Number);
+  const newMinutes = newH * 60 + newM;
+
+  const GAP_MINUTES = 45;
+
+  for (const appt of active) {
+    const sameDoctor = appt.doctorId === excludeDoctorId;
+
+    const otherStart = appt.queue?.schedule?.startTime;
+
+    if (!otherStart) continue;
+
+    const [oh, om] = otherStart.split(":").map(Number);
+    const otherMinutes = oh * 60 + om;
+
+    const gap = Math.abs(newMinutes - otherMinutes);
+
+    if (sameDoctor || gap < GAP_MINUTES) {
+      return {
+        appointment: appt,
+        gap,
+        sameDoctor,
+      };
+    }
+  }
+
+  return null;
+};

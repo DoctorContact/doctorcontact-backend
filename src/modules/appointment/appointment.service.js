@@ -66,8 +66,11 @@ export const bookOnlineAppointment = async (patientUserId, { doctorId, clinicId,
     });
   }
 
-  await assertBookableClinic(doctorId, clinicId);
-  await assertClinicOperational(clinicId, date, { isOnlineBooking: true }, doctorId);
+  // Independent checks (neither needs the other's result) — run together.
+  await Promise.all([
+    assertBookableClinic(doctorId, clinicId),
+    assertClinicOperational(clinicId, date, { isOnlineBooking: true }, doctorId),
+  ]);
 
   return bookAppointmentCore({
     doctorId,
@@ -84,9 +87,13 @@ export const bookReceptionAppointment = async (
   user,
   { doctorId, clinicId, scheduleId, date, patientId, newPatient, bookingSource }
 ) => {
+  // assertReceptionBookingAccess must run first (it's the auth gate); the
+  // other two checks are independent of each other and can run together.
   await assertReceptionBookingAccess(user, clinicId, doctorId);
-  await assertBookableClinic(doctorId, clinicId);
-  await assertClinicOperational(clinicId, date, { isOnlineBooking: false }, doctorId);
+  await Promise.all([
+    assertBookableClinic(doctorId, clinicId),
+    assertClinicOperational(clinicId, date, { isOnlineBooking: false }, doctorId),
+  ]);
 
   let finalPatientId = patientId;
   let finalPatientUserId;
@@ -562,21 +569,28 @@ const bookAppointmentCore = async ({ doctorId, clinicId, scheduleId, patientId, 
       isFull: currentBookingsCount >= schedule.maxPatients
     };
 
-    const queueMode = await getQueueModeForDoctorClinic(doctorId, clinicId);
-    const broadcastPayload = queueMode === "PRIVATE"
-        ? { doctorId, clinicId, date, scheduleId, status: updatedQueue.status, capacity: capacityPayload }
-        : {
-            doctorId,
-            clinicId,
-            date,
-            scheduleId,
-            currentToken: updatedQueue.currentToken,
-            lastTokenIssued: updatedQueue.lastTokenIssued,
-            status: updatedQueue.status,
-            capacity: capacityPayload 
-          };
-
-    emitQueueUpdate(doctorId, clinicId, broadcastPayload);
+    // The booking itself is already committed at this point — the patient's
+    // response doesn't depend on the live-queue broadcast to OTHER clients,
+    // so this queueMode lookup (1-2 more round trips) no longer blocks the
+    // return. Same reasoning as the notifyUser() call below: fire and log,
+    // don't make the booker wait on it.
+    getQueueModeForDoctorClinic(doctorId, clinicId)
+      .then((queueMode) => {
+        const broadcastPayload = queueMode === "PRIVATE"
+          ? { doctorId, clinicId, date, scheduleId, status: updatedQueue.status, capacity: capacityPayload }
+          : {
+              doctorId,
+              clinicId,
+              date,
+              scheduleId,
+              currentToken: updatedQueue.currentToken,
+              lastTokenIssued: updatedQueue.lastTokenIssued,
+              status: updatedQueue.status,
+              capacity: capacityPayload
+            };
+        emitQueueUpdate(doctorId, clinicId, broadcastPayload);
+      })
+      .catch((err) => console.error("post-booking queue broadcast failed:", err));
 
     // Not awaited: booking already succeeded and broadcast above. notifyUser
     // never throws (own internal try/catch) and its result isn't used, so
@@ -613,29 +627,36 @@ const formatTime = (date) => {
 };
 
 const assertClinicOperational = async (clinicId, date, { isOnlineBooking }, doctorId) => {
-  const clinic = await getClinicById(clinicId);
+  // These 4 lookups don't depend on each other's results (all keyed off
+  // clinicId/doctorId/date, which are already known) — they were being
+  // awaited one at a time (4 sequential round trips) even though nothing
+  // here needs the previous query's result before firing the next one.
+  // Running them together cuts this block to ~1 round trip of latency.
+  const dayOfWeek = DAY_NAMES[new Date(date).getDay()];
+
+  const [clinic, holiday, hours, leave] = await Promise.all([
+    getClinicById(clinicId),
+    getHolidayForClinicDate(clinicId, date),
+    getWorkingHoursForClinicDay(clinicId, dayOfWeek),
+    doctorId ? getDoctorLeaveForDate(doctorId, clinicId, date) : Promise.resolve(null),
+  ]);
+
   if (!clinic) throw new ApiError(404, "Clinic not found");
 
   if (isOnlineBooking && !clinic.onlineConsultationEnabled) {
     throw new ApiError(400, "This clinic does not accept online bookings — please book in person or by phone");
   }
 
-  const holiday = await getHolidayForClinicDate(clinicId, date);
   if (holiday) {
     throw new ApiError(400, `Clinic is closed on this date${holiday.reason ? `: ${holiday.reason}` : ""}`);
   }
 
-  const dayOfWeek = DAY_NAMES[new Date(date).getDay()];
-  const hours = await getWorkingHoursForClinicDay(clinicId, dayOfWeek);
   if (hours?.isClosed) {
     throw new ApiError(400, `Clinic is closed on ${dayOfWeek.toLowerCase()}s`);
   }
 
-  if (doctorId) {
-    const leave = await getDoctorLeaveForDate(doctorId, clinicId, date);
-    if (leave) {
-      throw new ApiError(400, `Doctor is on leave on this date${leave.reason ? `: ${leave.reason}` : ""}`);
-    }
+  if (leave) {
+    throw new ApiError(400, `Doctor is on leave on this date${leave.reason ? `: ${leave.reason}` : ""}`);
   }
 };
 
