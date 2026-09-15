@@ -3,24 +3,12 @@ import ApiError from "../../utils/apiError.js";
 import { MAX_ACTIVE_APPOINTMENTS } from "./appointment.constants.js";
 
 export const searchDoctors = async ({ q, doctorName, clinicName, clinicId, city, date }) => {
-  const where = {
-    isVerified: true,
-    clinic: { isApproved: true },
-  };
+  const where = { isVerified: true, clinic: { isApproved: true } };
 
-  if (doctorName) {
-    where.user = { name: { contains: doctorName, mode: "insensitive" } };
-  }
-  if (clinicName) {
-    where.clinic = { ...where.clinic, clinicName: { contains: clinicName, mode: "insensitive" } };
-  }
-  if (clinicId) {
-    where.clinicId = clinicId;
-  }
-  if (city) {
-    where.clinic = { ...where.clinic, city: { contains: city, mode: "insensitive" } };
-  }
-
+  if (doctorName) where.user = { name: { contains: doctorName, mode: "insensitive" } };
+  if (clinicName) where.clinic = { ...where.clinic, clinicName: { contains: clinicName, mode: "insensitive" } };
+  if (clinicId) where.clinicId = clinicId;
+  if (city) where.clinic = { ...where.clinic, city: { contains: city, mode: "insensitive" } };
   if (q) {
     where.OR = [
       { user: { name: { contains: q, mode: "insensitive" } } },
@@ -41,199 +29,127 @@ export const searchDoctors = async ({ q, doctorName, clinicName, clinicId, city,
     orderBy: [{ isFeatured: "desc" }, { featuredOrder: "asc" }],
   });
 
-  if (date) {
-    const doctorsWithQueue = await Promise.all(
-      doctors.map(async (doctor) => {
-        if (!doctor.clinicId) return { ...doctor, todayQueue: null };
-        const queues = await prisma.queue.findMany({
-          where: { doctorId: doctor.id, clinicId: doctor.clinicId, date: new Date(date) },
-        });
-        if (queues.length === 0) return { ...doctor, todayQueue: null };
-        const todayQueue = {
-          currentToken: Math.max(...queues.map((q) => q.currentToken)),
-          lastTokenIssued: queues.reduce((sum, q) => sum + q.lastTokenIssued, 0),
-          status: queues.every((q) => q.status === "CLOSED") ? "CLOSED" : "OPEN",
-          sessions: queues.length,
-        };
-        return { ...doctor, todayQueue };
-      })
-    );
-    return doctorsWithQueue;
-  }
+  if (!date) return doctors;
 
-  return doctors;
+  return Promise.all(
+    doctors.map(async (doctor) => {
+      if (!doctor.clinicId) return { ...doctor, todayQueue: null };
+
+      const queues = await prisma.queue.findMany({
+        where: { doctorId: doctor.id, clinicId: doctor.clinicId, date: new Date(date) },
+      });
+
+      if (queues.length === 0) return { ...doctor, todayQueue: null };
+
+      return {
+        ...doctor,
+        todayQueue: {
+          currentToken: Math.max(...queues.map((queue) => queue.currentToken)),
+          lastTokenIssued: queues.reduce((sum, queue) => sum + queue.lastTokenIssued, 0),
+          status: queues.every((queue) => queue.status === "CLOSED") ? "CLOSED" : "OPEN",
+          sessions: queues.length,
+        },
+      };
+    })
+  );
 };
 
 export const getBookableClinicsForDoctor = async (doctorId) => {
-  // doctor + associations are independent reads (both only need doctorId),
-  // so fire them together instead of awaiting one before starting the next —
-  // was 2 sequential round trips, now 1 round-trip's worth of latency.
   const [doctor, approvedAssociations] = await Promise.all([
-    prisma.doctor.findUnique({ where: { id: doctorId } }),
-    prisma.doctorClinicAssociation.findMany({
-      where: { doctorId, status: "APPROVED" },
-    }),
+    prisma.doctor.findUnique({ where: { id: doctorId }, select: { clinicId: true } }),
+    prisma.doctorClinicAssociation.findMany({ where: { doctorId, status: "APPROVED" }, select: { clinicId: true } }),
   ]);
   if (!doctor) return [];
-
-  return [doctor.clinicId, ...approvedAssociations.map((a) => a.clinicId)];
+  return [doctor.clinicId, ...approvedAssociations.map((assoc) => assoc.clinicId)].filter(Boolean);
 };
 
-export const findOrCreateQueue = async (doctorId, clinicId, date, scheduleId) => {
-  const queue = await prisma.queue.findUnique({
-    where: {
-      doctorId_clinicId_date_scheduleId: {
-        doctorId,
-        clinicId,
-        date: new Date(date),
-        scheduleId
-      }
-    }
-  });
+export const getDoctorById = (id) => prisma.doctor.findUnique({ where: { id } });
+export const getPatientById = (id) => prisma.patient.findUnique({ where: { id } });
+export const getDoctorScheduleById = (scheduleId) => prisma.doctorSchedule.findUnique({ where: { id: scheduleId } });
+export const getClinicById = (id) => prisma.clinic.findUnique({ where: { id } });
+export const getWorkingHoursForClinicDay = (clinicId, dayOfWeek) => prisma.clinicWorkingHours.findUnique({ where: { clinicId_dayOfWeek: { clinicId, dayOfWeek } } });
+export const getHolidayForClinicDate = (clinicId, date) => prisma.clinicHoliday.findUnique({ where: { clinicId_date: { clinicId, date: new Date(date) } } });
+export const getDoctorLeaveForDate = (doctorId, clinicId, date) => prisma.doctorLeave.findUnique({ where: { doctorId_clinicId_date: { doctorId, clinicId, date: new Date(date) } } });
 
-  if (queue) return queue;
-
-  return prisma.queue.create({
-    data: {
-      doctorId,
-      clinicId,
-      date: new Date(date),
-      scheduleId,
-      status: "OPEN",
-      currentToken: 0,
-      lastTokenIssued: 0,
-    }
-  });
-};
-
-export const getDoctorById = (id) => {
-  return prisma.doctor.findUnique({ where: { id } });
-};
-
-export const getPatientById = (id) => {
-  return prisma.patient.findUnique({ where: { id } });
-};
-export const getDoctorScheduleById = (scheduleId) => {
-  return prisma.doctorSchedule.findUnique({ where: { id: scheduleId } });
-};
-
-export const findConflictingAppointmentForPatient = async ({
-  patientId,
-  date,
-  scheduleStartTime,
-  excludeDoctorId,
-}) => {
-  const active = await prisma.appointment.findMany({
-    where: {
-      patientId,
-      date: new Date(date),
-      status: { in: ["WAITING", "CHECKED_IN"] },
-    },
-    include: {
-      queue: { include: { schedule: true } },
-      doctor: { include: { user: { select: { name: true } } } },
+const findConflictingAppointment = async (db, { patientId, date, scheduleStartTime, excludeDoctorId }) => {
+  const activeAppointments = await db.appointment.findMany({
+    where: { patientId, date: new Date(date), status: { in: ["WAITING", "CHECKED_IN"] } },
+    select: {
+      id: true, token: true, doctorId: true,
+      doctor: { select: { user: { select: { name: true } } } },
+      queue: { select: { schedule: { select: { startTime: true } } } },
     },
   });
 
-  const [newH, newM] = scheduleStartTime.split(":").map(Number);
-  const newMinutes = newH * 60 + newM;
+  if (activeAppointments.length === 0) return null;
+
+  const [newHours, newMinutes] = scheduleStartTime.split(":").map(Number);
+  const newTotalMinutes = newHours * 60 + newMinutes;
   const GAP_MINUTES = 45;
 
-  for (const appt of active) {
-    const sameDoctor = appt.doctorId === excludeDoctorId;
-    const otherStart = appt.queue?.schedule?.startTime;
-    if (!otherStart) continue;
+  for (const appointment of activeAppointments) {
+    const sameDoctor = appointment.doctorId === excludeDoctorId;
+    const otherStartTime = appointment.queue?.schedule?.startTime;
+    if (!otherStartTime) continue;
 
-    const [oh, om] = otherStart.split(":").map(Number);
-    const otherMinutes = oh * 60 + om;
-    const gap = Math.abs(newMinutes - otherMinutes);
+    const [otherHours, otherMinutes] = otherStartTime.split(":").map(Number);
+    const otherTotalMinutes = otherHours * 60 + otherMinutes;
+    const gap = Math.abs(newTotalMinutes - otherTotalMinutes);
 
     if (sameDoctor || gap < GAP_MINUTES) {
-      return { appointment: appt, gap, sameDoctor };
+      return { appointment, gap, sameDoctor };
     }
   }
-
   return null;
 };
 
-export const createAppointmentWithToken = async ({ doctorId, clinicId, patientId, queueId, schedule, date, bookingSource }) => {
+export const findConflictingAppointmentForPatient = async ({ patientId, date, scheduleStartTime, excludeDoctorId }) => {
+  return findConflictingAppointment(prisma, { patientId, date, scheduleStartTime, excludeDoctorId });
+};
+
+// 🚀 ULTRA-FAST ATOMIC TRANSACTION FOR BOOKING 🚀
+export const createAppointmentWithToken = async ({
+  doctorId, clinicId, patientId, scheduleId, date, bookingSource, maxCapacity
+}) => {
   return prisma.$transaction(async (tx) => {
-    // Was: fetched with `include: { schedule: true }` just to read
-    // schedule.id/maxPatients — but the caller already fetched and
-    // validated this exact schedule a moment ago (isActive,
-    // onlineBookingEnabled checks) before starting the transaction, so
-    // there's no need to join it again here. Passing it in drops one join
-    // from this query.
-    const queue = await tx.queue.findUnique({ where: { id: queueId } });
+    const queueDate = new Date(date);
 
-    if (!queue) throw new ApiError(404, "Queue not found");
-    if (queue.status === "CLOSED") throw new ApiError(400, "Queue is closed for this session");
-
-    const exception = await tx.scheduleException.findUnique({
-      where: { scheduleId_date: { scheduleId: schedule.id, date: new Date(date) } },
+    // 1. Atomic Queue Upsert (Directly locks the queue row safely without selecting it first)
+    const queue = await tx.queue.upsert({
+      where: { doctorId_clinicId_date_scheduleId: { doctorId, clinicId, date: queueDate, scheduleId } },
+      update: { lastTokenIssued: { increment: 1 } },
+      create: { doctorId, clinicId, date: queueDate, scheduleId, status: "OPEN", currentToken: 0, lastTokenIssued: 1 }
     });
-    if (exception?.isCancelled) {
-      throw new ApiError(400, "This session has been cancelled for this date");
+
+    if (queue.status === "CLOSED") {
+      throw new ApiError(400, "Queue is closed for this session");
     }
 
-    const maxCapacity = exception?.overrideMaxPatients ?? schedule.maxPatients ?? 20;
-
-    // Was two separate count() queries — one here (WAITING+CHECKED_IN, for
-    // the capacity check) and another identical-shaped one at the very end
-    // (WAITING+CHECKED_IN+COMPLETED, for the broadcast payload). Both are
-    // just different sums over the same per-status counts for this queue,
-    // so fetch every status count in one groupBy and derive both numbers
-    // from it in memory — one query instead of two.
-    const statusCounts = await tx.appointment.groupBy({
-      by: ["status"],
-      where: { queueId, status: { in: ["WAITING", "CHECKED_IN", "COMPLETED"] } },
-      _count: { _all: true },
+    // 2. Fast Active count limit check
+    const patientActiveCount = await tx.appointment.count({
+      where: { patientId, status: { in: ["WAITING", "CHECKED_IN"] } }
     });
-    const countFor = (status) => statusCounts.find((s) => s.status === status)?._count._all || 0;
-    const activeAppointmentsCount = countFor("WAITING") + countFor("CHECKED_IN");
-    const completedCountBeforeInsert = countFor("COMPLETED");
+    if (patientActiveCount >= MAX_ACTIVE_APPOINTMENTS) {
+      throw new ApiError(409, `You already have ${patientActiveCount} active upcoming appointments (max ${MAX_ACTIVE_APPOINTMENTS}).`);
+    }
 
-    if (activeAppointmentsCount >= maxCapacity) {
+    // 3. Queue Capacity check
+    const currentBookingsCount = await tx.appointment.count({
+      where: { queueId: queue.id, status: { in: ["WAITING", "CHECKED_IN", "COMPLETED"] } }
+    });
+    if (currentBookingsCount >= maxCapacity) {
       throw new ApiError(409, `This session is full (Capacity: ${maxCapacity}/${maxCapacity}). Please select another session.`);
     }
 
-    const patientActiveCount = await tx.appointment.count({
-      where: { patientId, status: { in: ["WAITING", "CHECKED_IN"] } },
-    });
-    if (patientActiveCount >= MAX_ACTIVE_APPOINTMENTS) {
-      throw new ApiError(
-        409,
-        `You already have ${patientActiveCount} active upcoming appointments — the maximum allowed is ${MAX_ACTIVE_APPOINTMENTS}.`
-      );
-    }
-
-    const newToken = queue.lastTokenIssued + 1;
-
+    // 4. Create appointment safely
     const appointment = await tx.appointment.create({
       data: {
-        doctorId,
-        clinicId,
-        patientId,
-        queueId,
-        date: new Date(date),
-        token: newToken,
-        bookingSource,
-        status: "WAITING"
-      },
+        doctorId, clinicId, patientId, queueId: queue.id, date: queueDate, token: queue.lastTokenIssued, bookingSource, status: "WAITING"
+      }
     });
 
-    const updatedQueue = await tx.queue.update({
-      where: { id: queueId },
-      data: { lastTokenIssued: newToken },
-    });
-
-    // The appointment just created is WAITING, so it adds exactly 1 to both
-    // "active" and "booked today" — no extra query needed to know the
-    // post-insert total; this removes the query that used to sit here.
-    const currentBookingsCount = activeAppointmentsCount + completedCountBeforeInsert + 1;
-
-    return { appointment, queue: updatedQueue, currentBookingsCount };
-  }, { isolationLevel: 'Serializable' });
+    return { appointment, queue, currentBookingsCount: currentBookingsCount + 1 };
+  }, { isolationLevel: "ReadCommitted" });
 };
 
 export const findAppointmentsForPatient = (patientId) => {
@@ -248,132 +164,33 @@ export const findAppointmentsForPatient = (patientId) => {
   });
 };
 
-export const findAppointmentById = (id) => {
-  return prisma.appointment.findUnique({
-    where: { id },
-    include: { queue: true, doctor: true, patient: { include: { user: true } } },
-  });
-};
+export const findAppointmentById = (id) => prisma.appointment.findUnique({ where: { id }, include: { queue: true, doctor: true, patient: { include: { user: true } } } });
+export const findAppointmentByIdFull = (id) => prisma.appointment.findUnique({ where: { id }, include: { patient: true } });
+export const findAppointmentForLiveView = (id) => prisma.appointment.findUnique({ where: { id }, include: { patient: { select: { id: true, userId: true, name: true } }, doctor: { include: { user: { select: { name: true } } } }, clinic: { select: { id: true, clinicName: true } }, queue: { include: { schedule: true } } } });
 
 export const getQueueModeForDoctorClinic = async (doctorId, clinicId) => {
   const doctor = await prisma.doctor.findUnique({ where: { id: doctorId } });
   if (!doctor) return "LIVE";
-
-  if (doctor.clinicId === clinicId) {
-    return doctor.queueMode;
-  }
-
-  const association = await prisma.doctorClinicAssociation.findFirst({
-    where: { doctorId, clinicId, status: "APPROVED" },
-  });
-
+  if (doctor.clinicId === clinicId) return doctor.queueMode;
+  const association = await prisma.doctorClinicAssociation.findFirst({ where: { doctorId, clinicId, status: "APPROVED" } });
   return association?.queueMode || "LIVE";
-};
-export const getClinicById = (id) => {
-  return prisma.clinic.findUnique({ where: { id } });
-};
-
-export const getWorkingHoursForClinicDay = (clinicId, dayOfWeek) => {
-  return prisma.clinicWorkingHours.findUnique({
-    where: { clinicId_dayOfWeek: { clinicId, dayOfWeek } },
-  });
-};
-
-export const getHolidayForClinicDate = (clinicId, date) => {
-  return prisma.clinicHoliday.findUnique({
-    where: { clinicId_date: { clinicId, date: new Date(date) } },
-  });
 };
 
 export const getConsultationMinutesForDoctorClinic = async (doctorId, clinicId) => {
   const doctor = await prisma.doctor.findUnique({ where: { id: doctorId } });
   if (!doctor) return null;
-
   if (doctor.clinicId === clinicId) return doctor.avgConsultationMinutes;
-
-  const association = await prisma.doctorClinicAssociation.findFirst({
-    where: { doctorId, clinicId, status: "APPROVED" },
-  });
+  const association = await prisma.doctorClinicAssociation.findFirst({ where: { doctorId, clinicId, status: "APPROVED" } });
   return association?.avgConsultationMinutes || null;
 };
 
-export const findAppointmentByIdFull = (id) => {
-  return prisma.appointment.findUnique({
-    where: { id },
-    include: { patient: true },
-  });
-};
-
-export const findAppointmentForLiveView = (id) => {
-  return prisma.appointment.findUnique({
-    where: { id },
-    include: {
-      patient: { select: { id: true, userId: true, name: true } },
-      doctor: { include: { user: { select: { name: true } } } },
-      clinic: { select: { id: true, clinicName: true } },
-      queue: { include: { schedule: true } },
-    },
-  });
-};
-
-export const cancelAppointmentRecord = (id, { cancelReason, cancelledBy }) => {
-  return prisma.appointment.update({
-    where: { id },
-    data: { status: "CANCELLED", cancelReason, cancelledBy },
-  });
-};
-
-export const getDoctorLeaveForDate = (doctorId, clinicId, date) => {
-  return prisma.doctorLeave.findUnique({
-    where: { doctorId_clinicId_date: { doctorId, clinicId, date: new Date(date) } },
-  });
-};
-
-export const countActiveAppointmentsForPatient = (patientId) => {
-  return prisma.appointment.count({
-    where: { patientId, status: { in: ["WAITING", "CHECKED_IN"] } },
-  });
-};
-
-export const getPatientRestrictionStatus = (patientId) => {
-  return prisma.patient.findUnique({
-    where: { id: patientId },
-    select: { id: true, bookingRestrictedUntil: true },
-  });
-};
-
-export const setPatientBookingRestriction = (patientId, restrictedUntil) => {
-  return prisma.patient.update({
-    where: { id: patientId },
-    data: { bookingRestrictedUntil: restrictedUntil },
-  });
-};
-
-// Part 14: the appointment sitting at currentToken is still being
-// consulted (CHECKED_IN) until "Next" is pressed again — it has NOT
-// finished yet, so it must count as one of the people ahead for every
-// patient behind it. Using `gte: currentToken` (not `gt`) includes it, and
-// the early-return below only short-circuits when patientToken is at or
-// behind currentToken (already passed) — NOT at currentToken + 1, since
-// that's exactly the immediate-next patient who DOES have one person
-// (whoever's currently being served) ahead of them.
+export const cancelAppointmentRecord = (id, { cancelReason, cancelledBy }) => prisma.appointment.update({ where: { id }, data: { status: "CANCELLED", cancelReason, cancelledBy } });
+export const countActiveAppointmentsForPatient = (patientId) => prisma.appointment.count({ where: { patientId, status: { in: ["WAITING", "CHECKED_IN"] } } });
+export const getPatientRestrictionStatus = (patientId) => prisma.patient.findUnique({ where: { id: patientId }, select: { id: true, bookingRestrictedUntil: true } });
+export const setPatientBookingRestriction = (patientId, restrictedUntil) => prisma.patient.update({ where: { id: patientId }, data: { bookingRestrictedUntil: restrictedUntil } });
 export const countActiveTokensAhead = (queueId, currentToken, patientToken) => {
-  if (patientToken <= currentToken) {
-    return Promise.resolve(0);
-  }
-
-  return prisma.appointment.count({
-    where: {
-      queueId,
-      token: {
-        gte: currentToken,
-        lt: patientToken,
-      },
-      status: {
-        in: ["WAITING", "CHECKED_IN"],
-      },
-    },
-  });
+  if (patientToken <= currentToken) return Promise.resolve(0);
+  return prisma.appointment.count({ where: { queueId, token: { gte: currentToken, lt: patientToken }, status: { in: ["WAITING", "CHECKED_IN"] } } });
 };
 
 export const findAppointmentsForClinic = (clinicId, { doctorId, status, date, patientId, from, to } = {}) => {
@@ -387,7 +204,6 @@ export const findAppointmentsForClinic = (clinicId, { doctorId, status, date, pa
     if (from) where.date.gte = new Date(from);
     if (to) where.date.lte = new Date(to);
   }
-
   return prisma.appointment.findMany({
     where,
     include: {
@@ -397,4 +213,25 @@ export const findAppointmentsForClinic = (clinicId, { doctorId, status, date, pa
     },
     orderBy: [{ date: "desc" }, { token: "asc" }],
   });
+};
+
+export const formatWaitEstimate = (minutes) => {
+  if (minutes == null) return null;
+  if (minutes <= 0) return "~0 min";
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  if (hours === 0) return `~${mins} min`;
+  if (mins === 0) return `~${hours} hr`;
+  return `~${hours} hr ${mins} min`;
+};
+
+export const computeQueueView = ({ currentToken, patientToken, activeTokensAhead, consultationMinutes }) => {
+  const isYourTurn = currentToken === patientToken;
+  const patientsAhead = isYourTurn ? 0 : Math.max(0, activeTokensAhead);
+  const minutes = patientsAhead * (consultationMinutes || 0);
+  return {
+    currentToken, yourToken: patientToken, patientsAhead, isYourTurn,
+    estimatedWaitMinutes: consultationMinutes ? minutes : null,
+    estimatedWaitLabel: consultationMinutes ? formatWaitEstimate(minutes) : null,
+  };
 };
