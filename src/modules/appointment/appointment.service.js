@@ -557,7 +557,7 @@ const bookAppointmentCore = async ({ doctorId, clinicId, scheduleId, patientId, 
       clinicId,
       patientId,
       queueId: queue.id,
-      scheduleId,
+      schedule,
       date,
       bookingSource,
     });

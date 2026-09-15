@@ -156,18 +156,18 @@ export const findConflictingAppointmentForPatient = async ({
   return null;
 };
 
-export const createAppointmentWithToken = async ({ doctorId, clinicId, patientId, queueId, scheduleId, date, bookingSource }) => {
+export const createAppointmentWithToken = async ({ doctorId, clinicId, patientId, queueId, schedule, date, bookingSource }) => {
   return prisma.$transaction(async (tx) => {
-    const queue = await tx.queue.findUnique({
-      where: { id: queueId },
-      include: { schedule: true }
-    });
+    // Was: fetched with `include: { schedule: true }` just to read
+    // schedule.id/maxPatients — but the caller already fetched and
+    // validated this exact schedule a moment ago (isActive,
+    // onlineBookingEnabled checks) before starting the transaction, so
+    // there's no need to join it again here. Passing it in drops one join
+    // from this query.
+    const queue = await tx.queue.findUnique({ where: { id: queueId } });
 
     if (!queue) throw new ApiError(404, "Queue not found");
     if (queue.status === "CLOSED") throw new ApiError(400, "Queue is closed for this session");
-
-    const schedule = queue.schedule;
-    if (!schedule) throw new ApiError(500, "Queue is missing schedule attachment");
 
     const exception = await tx.scheduleException.findUnique({
       where: { scheduleId_date: { scheduleId: schedule.id, date: new Date(date) } },
@@ -178,12 +178,20 @@ export const createAppointmentWithToken = async ({ doctorId, clinicId, patientId
 
     const maxCapacity = exception?.overrideMaxPatients ?? schedule.maxPatients ?? 20;
 
-    const activeAppointmentsCount = await tx.appointment.count({
-      where: {
-        queueId,
-        status: { in: ["WAITING", "CHECKED_IN"] }
-      }
+    // Was two separate count() queries — one here (WAITING+CHECKED_IN, for
+    // the capacity check) and another identical-shaped one at the very end
+    // (WAITING+CHECKED_IN+COMPLETED, for the broadcast payload). Both are
+    // just different sums over the same per-status counts for this queue,
+    // so fetch every status count in one groupBy and derive both numbers
+    // from it in memory — one query instead of two.
+    const statusCounts = await tx.appointment.groupBy({
+      by: ["status"],
+      where: { queueId, status: { in: ["WAITING", "CHECKED_IN", "COMPLETED"] } },
+      _count: { _all: true },
     });
+    const countFor = (status) => statusCounts.find((s) => s.status === status)?._count._all || 0;
+    const activeAppointmentsCount = countFor("WAITING") + countFor("CHECKED_IN");
+    const completedCountBeforeInsert = countFor("COMPLETED");
 
     if (activeAppointmentsCount >= maxCapacity) {
       throw new ApiError(409, `This session is full (Capacity: ${maxCapacity}/${maxCapacity}). Please select another session.`);
@@ -219,15 +227,10 @@ export const createAppointmentWithToken = async ({ doctorId, clinicId, patientId
       data: { lastTokenIssued: newToken },
     });
 
-    // Display count for the broadcast payload — deliberately includes
-    // COMPLETED (a seen patient still occupied a booking slot today),
-    // unlike activeAppointmentsCount above which excludes it (that one only
-    // cares about capacity still in use). Computed here, in the same
-    // transaction/snapshot as the write above, so there's no window for a
-    // concurrent cancel/complete to make the broadcast figure stale.
-    const currentBookingsCount = await tx.appointment.count({
-      where: { queueId, status: { in: ["WAITING", "CHECKED_IN", "COMPLETED"] } },
-    });
+    // The appointment just created is WAITING, so it adds exactly 1 to both
+    // "active" and "booked today" — no extra query needed to know the
+    // post-insert total; this removes the query that used to sit here.
+    const currentBookingsCount = activeAppointmentsCount + completedCountBeforeInsert + 1;
 
     return { appointment, queue: updatedQueue, currentBookingsCount };
   }, { isolationLevel: 'Serializable' });
