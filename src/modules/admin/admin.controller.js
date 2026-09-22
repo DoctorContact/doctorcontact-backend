@@ -157,3 +157,19 @@ export const deactivateClinic = asyncHandler(async (req, res) => {
   res.status(200).json(new ApiResponse(true, "Clinic deactivated successfully"));
 });
 
+// ... existing controllers ...
+
+export const deleteDoctor = asyncHandler(async (req, res) => {
+  await adminService.deleteDoctor(req.params.doctorId);
+  res.status(200).json(new ApiResponse(true, "Doctor deleted successfully"));
+});
+
+export const unverifyDoctor = asyncHandler(async (req, res) => {
+  const doctor = await adminService.unverifyDoctor(req.params.doctorId);
+  res.status(200).json(new ApiResponse(true, "Doctor unverified successfully", { doctor }));
+});
+
+export const listAllDoctors = asyncHandler(async (req, res) => {
+  const doctors = await adminService.listAllDoctors();
+  res.status(200).json(new ApiResponse(true, "All doctors fetched", { doctors }));
+});

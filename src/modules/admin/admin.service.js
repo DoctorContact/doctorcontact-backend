@@ -34,6 +34,7 @@ import {
   findDiagnosticCenterByIdRaw,
   setDiagnosticCenterApproval,
   setDoctorFeatured,
+  findAllDoctorsAdmin,
   findFeaturedDoctors,
 } from "./admin.repository.js";
 
@@ -319,4 +320,32 @@ export const deactivateClinic = async (clinicId) => {
   } catch (error) {
     throw new ApiError(500, "Failed to deactivate clinic");
   }
+};
+
+
+// ... existing repo functions ...
+
+export const softDeleteDoctor = async (id) => {
+  return prisma.$transaction(async (tx) => {
+    const doctor = await tx.doctor.findUnique({ where: { id } });
+    if (!doctor) throw new Error("Doctor not found");
+
+    // 1. Revoke verification and availability
+    const updatedDoctor = await tx.doctor.update({
+      where: { id },
+      data: { isVerified: false, isAvailable: false }
+    });
+
+    // 2. Deactivate the User account
+    await tx.user.update({
+      where: { id: doctor.userId },
+      data: { isActive: false }
+    });
+
+    return updatedDoctor;
+  });
+};
+
+export const listAllDoctors = async () => {
+  return findAllDoctorsAdmin();
 };

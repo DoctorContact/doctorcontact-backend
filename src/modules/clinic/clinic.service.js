@@ -83,21 +83,19 @@ export const addDoctor = async (clinicUserId, payload) => {
       throw new ApiError(409, `Doctor already has a ${existingAssoc.status} request/association with this clinic.`);
     }
 
-    // Create Doctor ↔ Clinic association — PENDING, same as every other
-    // request/response pathway in the app (Step 6 shouldn't bypass the
-    // doctor's own consent just because a Clinic Admin already knows their
-    // email/phone). The doctor accepts/rejects via the normal
-    // respondToDoctorRequest flow.
+    // 🟢 FIXED CODE: Create Doctor ↔ Clinic association properly picking up the Frontend data!
     const association = await prisma.doctorClinicAssociation.create({
       data: {
-        doctorId: existingDoctor.id,
-        clinicId: clinic.id,
-        fee: payload.fee || existingDoctor.fee || 0,
-        dayOfWeek: payload.dayOfWeek || "MONDAY",
-        startTime: payload.startTime || "09:00",
-        endTime: payload.endTime || "17:00",
+        doctorId: existingDoctor.id, // Fixed doctor variable
+        clinicId: clinic.id,         // Fixed clinic variable
+        fee: payload.fee,
+        dayOfWeek: payload.recurrenceType === "WEEKLY" && payload.recurrencePattern?.days?.length > 0 
+                    ? payload.recurrencePattern.days[0] 
+                    : "MONDAY",
+        startTime: payload.startTime || "09:00", 
+        endTime: payload.endTime || "17:00",     
         status: "PENDING",
-        requestedBy: "CLINIC"
+        requestedBy: "CLINIC",
       }
     });
 
@@ -146,14 +144,11 @@ export const editDoctor = async (clinicUserId, doctorId, data) => {
   const clinic = await clinicRepo.findClinicByUserId(clinicUserId);
   if (!clinic) throw new ApiError(404, "Clinic profile not found");
   
-  // Note: editDoctor currently strictly edits primary doctors. If editing an association, 
-  // you may need to extend this to check doctorClinicAssociation based on future requirements.
   const doctor = await clinicRepo.findDoctorById(doctorId);
   if (!doctor || doctor.clinicId !== clinic.id) throw new ApiError(404, "Doctor not found in your clinic");
   return clinicRepo.updateDoctor(doctorId, data);
 };
 
-// === NEW: Remove Doctor safely without destroying global accounts ===
 export const removeDoctorFromClinic = async (clinicUserId, doctorId) => {
   const clinic = await clinicRepo.findClinicByUserId(clinicUserId);
   if (!clinic) throw new ApiError(404, "Clinic profile not found");
@@ -161,8 +156,6 @@ export const removeDoctorFromClinic = async (clinicUserId, doctorId) => {
   const doctor = await prisma.doctor.findUnique({ where: { id: doctorId } });
   if (!doctor) throw new ApiError(404, "Doctor not found");
 
-  // Rule: Do NOT delete the global doctor account. 
-  // If this clinic is the originating (primary) clinic, schema constraints prevent nullifying `clinicId`.
   if (doctor.clinicId === clinic.id) {
     throw new ApiError(
       400, 
@@ -178,7 +171,6 @@ export const removeDoctorFromClinic = async (clinicUserId, doctorId) => {
     throw new ApiError(404, "Doctor is not associated with your clinic");
   }
 
-  // Remove the many-to-many relationship
   await prisma.doctorClinicAssociation.delete({
     where: { id: association.id }
   });
@@ -328,8 +320,6 @@ export const toggleAvailability = async (clinicUserId, isAvailableToday) => {
   return clinicRepo.updateClinicAvailability(clinic.id, isAvailableToday);
 };
 
-// ON/OFF switch: when ON, the daily job auto-schedules a follow-up for any
-// patient of this clinic who has not visited in the last month.
 export const toggleAutoFollowup = async (clinicUserId, enabled) => {
   const clinic = await clinicRepo.findClinicByUserId(clinicUserId);
   if (!clinic) throw new ApiError(404, "Clinic profile not found");

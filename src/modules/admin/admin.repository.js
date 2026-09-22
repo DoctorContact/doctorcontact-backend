@@ -247,3 +247,44 @@ export const softDeleteClinic = async (id) => {
     return updatedClinic;
   });
 };
+
+// ... existing repo functions ...
+
+// ✅ ADDED: softDeleteDoctor
+export const softDeleteDoctor = async (id) => {
+  return prisma.$transaction(async (tx) => {
+    const doctor = await tx.doctor.findUnique({ where: { id } });
+    if (!doctor) throw new Error("Doctor not found");
+
+    // 1. Revoke verification and availability
+    const updatedDoctor = await tx.doctor.update({
+      where: { id },
+      data: { isVerified: false, isAvailable: false }
+    });
+
+    // 2. Deactivate the User account
+    await tx.user.update({
+      where: { id: doctor.userId },
+      data: { isActive: false }
+    });
+
+    return updatedDoctor;
+  });
+};
+
+// ✅ ADDED: findAllDoctorsAdmin
+// ✅ FIXED: Only fetch doctors whose user account is still active
+export const findAllDoctorsAdmin = () => {
+  return prisma.doctor.findMany({
+    where: {
+      user: {
+        isActive: true, // 🟢 এই লাইনের ফলে ডিলিট/রিজেক্ট হওয়া ডক্টররা আর লিস্টে আসবে না
+      },
+    },
+    include: {
+      user: { select: { name: true, email: true, phone: true } },
+      clinic: { select: { clinicName: true } },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+};

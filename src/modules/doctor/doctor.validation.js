@@ -7,26 +7,29 @@ export const searchDoctorsByNameSchema = z.object({
 export const sendRequestToDoctorSchema = z.object({
   doctorId: z.string().uuid(),
   fee: z.number().nonnegative().optional(),
-  dayOfWeek: z.enum(["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"]).default("MONDAY"), // Fallback for legacy association
-  startTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/, "startTime must be HH:mm"),
-  endTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/, "endTime must be HH:mm"),
+  dayOfWeek: z.enum(["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"]).optional(), 
+  startTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/, "startTime must be HH:mm").optional(),
+  endTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/, "endTime must be HH:mm").optional(),
   maxPatients: z.number().int().positive().default(20),
-  recurrenceType: z.enum(["DAILY", "WEEKLY", "MONTHLY_DATE", "MONTHLY_WEEKDAY"]).default("DAILY"),
+  recurrenceType: z.enum(["DAILY", "WEEKLY", "MONTHLY_DATE", "MONTHLY_WEEKDAY", "SPECIFIC_DATE"]).default("DAILY"),
   recurrencePattern: z.record(z.any()).optional().default({}),
-}).refine((data) => data.startTime < data.endTime, {
+}).refine((data) => {
+  if (data.startTime && data.endTime) return data.startTime < data.endTime;
+  return true;
+}, {
   message: "endTime must be after startTime",
 });
 
-// ADD THIS SCHEMA:
 export const sendRequestToClinicSchema = z.object({
-  clinicId: z.string().uuid(), // Assuming you are targeting a clinic by its UUID
+  clinicId: z.string().uuid(), 
   fee: z.number().nonnegative().optional(),
-  dayOfWeek: z.enum([
-    "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY",
-  ]),
-  startTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/, "startTime must be HH:mm"),
-  endTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/, "endTime must be HH:mm"),
-}).refine((data) => data.startTime < data.endTime, {
+  dayOfWeek: z.enum(["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"]).optional(),
+  startTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/, "startTime must be HH:mm").optional(),
+  endTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/, "endTime must be HH:mm").optional(),
+}).refine((data) => {
+  if (data.startTime && data.endTime) return data.startTime < data.endTime;
+  return true;
+}, {
   message: "endTime must be after startTime",
 });
 

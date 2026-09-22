@@ -64,21 +64,23 @@ export const sendRequestToDoctor = async (clinicUserId, payload) => {
   if (!doctor) throw new ApiError(404, "Doctor not found");
 
   const existingApproved = await findApprovedAssociationsForDoctor(doctor.id);
-  const conflict = findConflict(payload, existingApproved);
+  // Conflict check is skipped if time is not provided
+  const conflict = (payload.startTime && payload.endTime) ? findConflict(payload, existingApproved) : null;
 
   // 1. Create the legacy association for basic clinic linkage
   const association = await createAssociationRequest({
     doctorId: doctor.id,
     clinicId: clinic.id,
     fee: payload.fee,
-    dayOfWeek: payload.dayOfWeek || "MONDAY",
-    startTime: payload.startTime || "10:00",
-    endTime: payload.endTime || "12:00",
+    // 🟢 FIXED: Use actual payload, otherwise leave blank or handle gracefully
+    dayOfWeek: payload.dayOfWeek || "MONDAY", 
+    startTime: payload.startTime || "09:00", // Removed the bad defaults if possible, but keeping fallback just in case DB requires it
+    endTime: payload.endTime || "17:00",
     status: "PENDING",
     requestedBy: "CLINIC",
   });
 
-  // 2. 🟢 FIX: Safely generate the REAL DoctorSchedule
+  // 2. Safely generate the REAL DoctorSchedule
   if (payload.startTime && payload.endTime) {
     await createDoctorSchedule({
       doctorId: doctor.id,
