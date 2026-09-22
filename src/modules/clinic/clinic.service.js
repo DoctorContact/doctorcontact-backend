@@ -10,10 +10,34 @@ import { findApprovedAssociationsForDoctor } from "../doctor/doctor.repository.j
 import { evaluateClinicAvailability } from "./clinic.helper.js";
 import { logAudit } from "../audit/audit.service.js";
 
-// === NEW: Lookup existing doctor by email ===
+// 🟢 ISSUE 1 FIX: resolveDayOfWeek helper
+const DAY_OF_WEEK_BY_JS_INDEX = [
+  "SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY",
+];
+
+const resolveDayOfWeek = (payload) => {
+  if (payload.dayOfWeek) return payload.dayOfWeek;
+
+  if (payload.recurrenceType === "WEEKLY" && payload.recurrencePattern?.days?.length > 0) {
+    return payload.recurrencePattern.days[0];
+  }
+
+  if (payload.recurrenceType === "MONTHLY_WEEKDAY" && payload.recurrencePattern?.day) {
+    return payload.recurrencePattern.day;
+  }
+
+  if (payload.recurrenceType === "SPECIFIC_DATE" && payload.recurrencePattern?.exactDate) {
+    const parsed = new Date(payload.recurrencePattern.exactDate);
+    if (!isNaN(parsed.getTime())) return DAY_OF_WEEK_BY_JS_INDEX[parsed.getDay()];
+  }
+
+  // Fallback to current day
+  return DAY_OF_WEEK_BY_JS_INDEX[new Date().getDay()];
+};
+
 export const lookupDoctorByEmail = async (email) => {
   const user = await findUserByEmail(email);
-  if (!user) return null; // Frontend can show "New Doctor" form
+  if (!user) return null; 
   if (user.role !== "DOCTOR") throw new ApiError(400, "User exists but is not registered as a DOCTOR");
 
   const doctor = await prisma.doctor.findUnique({
@@ -44,14 +68,12 @@ export const addDoctor = async (clinicUserId, payload) => {
   if (!clinic) throw new ApiError(404, "Clinic profile not found");
   if (!clinic.isApproved) throw new ApiError(403, "Your clinic is not yet approved by admin");
 
-  // Look up an existing doctor by whichever identifier was given — email OR phone.
   const existingUser = payload.email
     ? await findUserByEmail(payload.email)
     : payload.phone
     ? await findUserByPhone(payload.phone)
     : null;
 
-  // === STEP 2 LOGIC: Associate existing doctor instead of duplicating ===
   if (existingUser) {
     if (existingUser.role !== "DOCTOR") {
       throw new ApiError(409, "A user with this email/phone exists but is not registered as a DOCTOR.");
@@ -60,13 +82,10 @@ export const addDoctor = async (clinicUserId, payload) => {
     const existingDoctor = await prisma.doctor.findUnique({ where: { userId: existingUser.id } });
     if (!existingDoctor) throw new ApiError(500, "Doctor profile missing for this user.");
 
-    // Check if association already exists
     const existingAssoc = await prisma.doctorClinicAssociation.findFirst({
       where: { doctorId: existingDoctor.id, clinicId: clinic.id }
     });
 
-    // If the doctor is already linked (either natively or via an APPROVED
-    // association), return success immediately — nothing new to create.
     if (existingDoctor.clinicId === clinic.id || (existingAssoc && existingAssoc.status === "APPROVED")) {
       const { password: _pw, refreshToken: _rt, ...safeUser } = existingUser;
       return { 
@@ -78,22 +97,22 @@ export const addDoctor = async (clinicUserId, payload) => {
       };
     }
 
-    // If an association exists but is PENDING or REJECTED
     if (existingAssoc) {
       throw new ApiError(409, `Doctor already has a ${existingAssoc.status} request/association with this clinic.`);
     }
 
-    // 🟢 FIXED CODE: Create Doctor ↔ Clinic association properly picking up the Frontend data!
+    if (!payload.startTime || !payload.endTime) {
+      throw new ApiError(400, "startTime and endTime are required to send a schedule request to this doctor.");
+    }
+
     const association = await prisma.doctorClinicAssociation.create({
       data: {
-        doctorId: existingDoctor.id, // Fixed doctor variable
-        clinicId: clinic.id,         // Fixed clinic variable
+        doctorId: existingDoctor.id,
+        clinicId: clinic.id,
         fee: payload.fee,
-        dayOfWeek: payload.recurrenceType === "WEEKLY" && payload.recurrencePattern?.days?.length > 0 
-                    ? payload.recurrencePattern.days[0] 
-                    : "MONDAY",
-        startTime: payload.startTime || "09:00", 
-        endTime: payload.endTime || "17:00",     
+        dayOfWeek: resolveDayOfWeek(payload),
+        startTime: payload.startTime,
+        endTime: payload.endTime,
         status: "PENDING",
         requestedBy: "CLINIC",
       }
@@ -126,7 +145,6 @@ export const addDoctor = async (clinicUserId, payload) => {
     };
   }
 
-  // === Standard flow for entirely new Doctor ===
   const hashedPassword = await hashPassword(payload.password);
   const { specialization, specializationIds, qualification, experience, fee, startTime, dayOfWeek, endTime, ...userFields } = payload;
   
@@ -325,10 +343,6 @@ export const toggleAutoFollowup = async (clinicUserId, enabled) => {
   if (!clinic) throw new ApiError(404, "Clinic profile not found");
   return clinicRepo.setAutoFollowupEnabled(clinic.id, enabled);
 };
-
-// ==========================================
-// PUBLIC SERVICES
-// ==========================================
 
 export const searchClinicsAdvanced = async (filters) => {
   const clinics = await clinicRepo.searchClinicsAdvancedDB(filters);

@@ -21,8 +21,8 @@ export const createDoctorSchema = z
     password: z.string().optional().refine((val) => !val || val.length >= 6, {
       message: "Password must be at least 6 characters",
     }),
-    specialization: z.string().optional(), // Kept for legacy/fallback text
-    specializationIds: z.array(z.string().uuid()).optional(), // DB-driven specializations
+    specialization: z.string().optional(), 
+    specializationIds: z.array(z.string().uuid()).optional(),
     qualification: z.string().optional(),
     experience: z.number().int().nonnegative().optional(),
     fee: z.number().nonnegative().optional(),
@@ -30,8 +30,25 @@ export const createDoctorSchema = z
       .string()
       .regex(/^([01]\d|2[0-3]):([0-5]\d)$/, "startTime must be in HH:mm 24-hour format")
       .optional(),
+    endTime: z
+      .string()
+      .regex(/^([01]\d|2[0-3]):([0-5]\d)$/, "endTime must be in HH:mm 24-hour format")
+      .optional(),
+    dayOfWeek: z
+      .enum(["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"])
+      .optional(),
+    recurrenceType: z.enum(["DAILY", "WEEKLY", "MONTHLY_DATE", "MONTHLY_WEEKDAY", "SPECIFIC_DATE"]).optional(),
+    recurrencePattern: z.record(z.any()).optional(),
   })
-  .refine((data) => data.email || data.phone, { message: "Email or phone number is required" });
+  .refine((data) => data.email || data.phone, { message: "Email or phone number is required" })
+  // 🟢 FIX: Allow night shifts (e.g. 20:00 to 08:00). Only prevent identical start and end times.
+  .refine((data) => {
+    if (!data.startTime || !data.endTime) return true;
+    return data.startTime !== data.endTime; 
+  }, {
+    message: "Start time and end time cannot be exactly the same",
+    path: ["endTime"],
+  });
 
 export const updateDoctorSchema = z.object({
   startTime: z
@@ -39,7 +56,7 @@ export const updateDoctorSchema = z.object({
     .regex(/^([01]\d|2[0-3]):([0-5]\d)$/, "startTime must be in HH:mm 24-hour format")
     .optional(),
   specialization: z.string().optional(),
-  specializationIds: z.array(z.string().uuid()).optional(), // DB-driven specializations
+  specializationIds: z.array(z.string().uuid()).optional(),
   qualification: z.string().optional(),
   experience: z.number().int().nonnegative().optional(),
   fee: z.number().nonnegative().optional(),
@@ -73,14 +90,12 @@ export const setWorkingHoursSchema = z.object({
   workingHours: z
     .array(
       z.object({
-        // Transform kore always UPPERCASE kore nebe, jate "Monday" pathaleo error na ase
         dayOfWeek: z.string().transform((v) => v.toUpperCase()).pipe(
           z.enum([
             "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY",
           ])
         ),
         isClosed: z.boolean().default(false),
-        // Empty string ("") ba null asle jate bad request na hoy, tar jonno refine kora holo
         openTime: z
           .string()
           .nullable()
@@ -101,6 +116,7 @@ export const setWorkingHoursSchema = z.object({
     )
     .min(1, "At least one day must be provided"),
 });
+
 export const addHolidaySchema = z.object({
   date: z.string(), // YYYY-MM-DD
   reason: z.string().optional(),

@@ -15,9 +15,6 @@ import {
   removeDoctorLeave,
   findLeaveForDate,
   findUpcomingLeaves,
-  getAllVerifiedDoctors,
-  getFeaturedDoctors,
-  getAvailableDoctors,
   getDoctorByIdWithClinic,
   updateDoctorDetails,
   updateDoctorAvgConsultation,
@@ -35,7 +32,6 @@ import { APPROACH_THRESHOLD } from "../queue/queue.constants.js";
 import { emitAppointmentNotification } from "../../sockets/notification.socket.js";
 import { uploadBufferToCloudinary, deleteFromCloudinary } from "../../utils/cloudinaryUpload.js";
 import { evaluateDoctorStatus } from "./doctor.helper.js";
-
 import { checkScheduleConflict } from "./schedule.helper.js";
 import {
   createDoctorSchedule,
@@ -54,7 +50,10 @@ export const searchByName = async (name) => {
   return searchDoctorsByName(name);
 };
 
-// Clinic sends a request to a doctor
+// ==============================================
+// REQUEST & ASSOCIATION LOGIC
+// ==============================================
+
 export const sendRequestToDoctor = async (clinicUserId, payload) => {
   const clinic = await findClinicByUserId(clinicUserId);
   if (!clinic) throw new ApiError(404, "Clinic profile not found");
@@ -64,23 +63,19 @@ export const sendRequestToDoctor = async (clinicUserId, payload) => {
   if (!doctor) throw new ApiError(404, "Doctor not found");
 
   const existingApproved = await findApprovedAssociationsForDoctor(doctor.id);
-  // Conflict check is skipped if time is not provided
   const conflict = (payload.startTime && payload.endTime) ? findConflict(payload, existingApproved) : null;
 
-  // 1. Create the legacy association for basic clinic linkage
   const association = await createAssociationRequest({
     doctorId: doctor.id,
     clinicId: clinic.id,
     fee: payload.fee,
-    // 🟢 FIXED: Use actual payload, otherwise leave blank or handle gracefully
     dayOfWeek: payload.dayOfWeek || "MONDAY", 
-    startTime: payload.startTime || "09:00", // Removed the bad defaults if possible, but keeping fallback just in case DB requires it
+    startTime: payload.startTime || "09:00", 
     endTime: payload.endTime || "17:00",
     status: "PENDING",
     requestedBy: "CLINIC",
   });
 
-  // 2. Safely generate the REAL DoctorSchedule
   if (payload.startTime && payload.endTime) {
     await createDoctorSchedule({
       doctorId: doctor.id,
@@ -90,7 +85,7 @@ export const sendRequestToDoctor = async (clinicUserId, payload) => {
       maxPatients: payload.maxPatients || 20,
       recurrenceType: payload.recurrenceType || "DAILY",
       recurrencePattern: payload.recurrencePattern || {},
-      isActive: true
+      isActive: false // 🟢 Keeps schedule hidden until approved
     });
   }
 
@@ -102,7 +97,98 @@ export const sendRequestToDoctor = async (clinicUserId, payload) => {
   };
 };
 
-// Doctor responds to a clinic's request
+export const sendRequestToClinic = async (doctorUserId, payload) => {
+  const doctor = await findDoctorByUserId(doctorUserId);
+  if (!doctor) throw new ApiError(404, "Doctor profile not found");
+  if (!doctor.isVerified) throw new ApiError(403, "Your profile is not yet verified by admin");
+
+  const clinic = await findClinicById(payload.clinicId);
+  if (!clinic) throw new ApiError(404, "Clinic not found");
+  if (!clinic.isApproved) throw new ApiError(400, "This clinic is not yet approved");
+
+  const existingApproved = await findApprovedAssociationsForDoctor(doctor.id);
+  const conflict = findConflict(payload, existingApproved);
+
+  const association = await createAssociationRequest({
+    doctorId: doctor.id,
+    clinicId: clinic.id,
+    fee: payload.fee,
+    dayOfWeek: payload.dayOfWeek,
+    startTime: payload.startTime,
+    endTime: payload.endTime,
+    status: "PENDING",
+    requestedBy: "DOCTOR",
+  });
+
+  return {
+    association,
+    conflictWarning: conflict
+      ? "Note: this time slot currently conflicts with an approved schedule at another clinic. It will stay PENDING until that conflict is resolved."
+      : null,
+  };
+};
+
+const approveAssociationSafely = async (associationId, doctorId) => {
+  try {
+    return await prisma.$transaction(
+      async (tx) => {
+        const current = await tx.doctorClinicAssociation.findUnique({ where: { id: associationId } });
+        if (!current || current.status !== "PENDING") {
+          throw new ApiError(400, `This request has already been ${current ? current.status.toLowerCase() : "removed"}`);
+        }
+
+        const existingApproved = await tx.doctorClinicAssociation.findMany({
+          where: { doctorId, status: "APPROVED" },
+        });
+
+        const conflict = findConflict(current, existingApproved);
+        if (conflict) {
+          throw new ApiError(409, `Cannot approve — this overlaps with an already-approved schedule (${conflict.dayOfWeek} ${conflict.startTime}-${conflict.endTime}) at another clinic`);
+        }
+
+        const updatedAssoc = await tx.doctorClinicAssociation.update({ 
+          where: { id: associationId }, 
+          data: { status: "APPROVED" } 
+        });
+
+        // 🟢 Activate pending schedules, or create one if missing
+        const existingInactiveSchedules = await tx.doctorSchedule.findMany({
+          where: { doctorId: current.doctorId, clinicId: current.clinicId, isActive: false }
+        });
+
+        if (existingInactiveSchedules.length > 0) {
+          await tx.doctorSchedule.updateMany({
+            where: { doctorId: current.doctorId, clinicId: current.clinicId, isActive: false },
+            data: { isActive: true }
+          });
+        } else {
+          await tx.doctorSchedule.create({
+            data: {
+              doctorId: current.doctorId,
+              clinicId: current.clinicId,
+              startTime: current.startTime,
+              endTime: current.endTime,
+              maxPatients: 20, 
+              recurrenceType: "WEEKLY", 
+              recurrencePattern: { days: [current.dayOfWeek] },
+              isActive: true
+            }
+          });
+        }
+
+        return updatedAssoc;
+      },
+      { isolation: Prisma.TransactionIsolationLevel.Serializable }
+    );
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    if (err.code === "P2034") {
+      throw new ApiError(409, "This approval conflicted with another concurrent request — please try again");
+    }
+    throw err;
+  }
+};
+
 export const respondToClinicRequest = async (doctorUserId, associationId, action) => {
   const association = await findAssociationById(associationId);
   if (!association) throw new ApiError(404, "Request not found");
@@ -116,17 +202,45 @@ export const respondToClinicRequest = async (doctorUserId, associationId, action
     throw new ApiError(400, `This request has already been ${association.status.toLowerCase()}`);
   }
 
-  if (action === "REJECT") {
-    return updateAssociationStatus(associationId, "REJECTED");
-  }
-
+  if (action === "REJECT") return updateAssociationStatus(associationId, "REJECTED");
   return approveAssociationSafely(associationId, association.doctorId);
 };
 
+export const respondToDoctorRequest = async (clinicUserId, associationId, action) => {
+  const association = await findAssociationById(associationId);
+  if (!association) throw new ApiError(404, "Request not found");
 
-// ==============================================
-// REQUEST FETCHING LOGIC (For Both Doctor & Clinic)
-// ==============================================
+  const clinic = await findClinicByUserId(clinicUserId);
+  if (!clinic || clinic.id !== association.clinicId) {
+    throw new ApiError(403, "This request does not belong to your clinic");
+  }
+
+  if (association.status !== "PENDING") {
+    throw new ApiError(400, `This request has already been ${association.status.toLowerCase()}`);
+  }
+
+  if (action === "REJECT") return updateAssociationStatus(associationId, "REJECTED");
+  return approveAssociationSafely(associationId, association.doctorId);
+};
+
+export const cancelAssociation = async (userId, userRole, associationId) => {
+  const association = await findAssociationById(associationId);
+  if (!association) throw new ApiError(404, "Association not found");
+
+  if (userRole === "DOCTOR") {
+    const doctor = await findDoctorByUserId(userId);
+    if (!doctor || doctor.id !== association.doctorId) throw new ApiError(403, "This association does not belong to you");
+  } else if (userRole === "CLINIC") {
+    const clinic = await findClinicByUserId(userId);
+    if (!clinic || clinic.id !== association.clinicId) throw new ApiError(403, "This association does not belong to your clinic");
+  }
+
+  if (association.status === "CANCELLED" || association.status === "REJECTED") {
+    throw new ApiError(400, `This association is already ${association.status.toLowerCase()}`);
+  }
+
+  return updateAssociationStatus(associationId, "CANCELLED");
+};
 
 export const getMyReceivedRequests = async (userId) => {
   const doctor = await findDoctorByUserId(userId);
@@ -173,119 +287,8 @@ export const getMySentRequests = async (userId) => {
 };
 
 // ==============================================
-
-// Doctor sends a request to a clinic
-export const sendRequestToClinic = async (doctorUserId, payload) => {
-  const doctor = await findDoctorByUserId(doctorUserId);
-  if (!doctor) throw new ApiError(404, "Doctor profile not found");
-  if (!doctor.isVerified) throw new ApiError(403, "Your profile is not yet verified by admin");
-
-  const clinic = await findClinicById(payload.clinicId);
-  if (!clinic) throw new ApiError(404, "Clinic not found");
-  if (!clinic.isApproved) throw new ApiError(400, "This clinic is not yet approved");
-
-  const existingApproved = await findApprovedAssociationsForDoctor(doctor.id);
-  const conflict = findConflict(payload, existingApproved);
-
-  const association = await createAssociationRequest({
-    doctorId: doctor.id,
-    clinicId: clinic.id,
-    fee: payload.fee,
-    dayOfWeek: payload.dayOfWeek,
-    startTime: payload.startTime,
-    endTime: payload.endTime,
-    status: "PENDING",
-    requestedBy: "DOCTOR",
-  });
-
-  return {
-    association,
-    conflictWarning: conflict
-      ? "Note: this time slot currently conflicts with an approved schedule at another clinic. It will stay PENDING until that conflict is resolved."
-      : null,
-  };
-};
-
-// Clinic responds to a doctor's request
-export const respondToDoctorRequest = async (clinicUserId, associationId, action) => {
-  const association = await findAssociationById(associationId);
-  if (!association) throw new ApiError(404, "Request not found");
-
-  const clinic = await findClinicByUserId(clinicUserId);
-  if (!clinic || clinic.id !== association.clinicId) {
-    throw new ApiError(403, "This request does not belong to your clinic");
-  }
-
-  if (association.status !== "PENDING") {
-    throw new ApiError(400, `This request has already been ${association.status.toLowerCase()}`);
-  }
-
-  if (action === "REJECT") {
-    return updateAssociationStatus(associationId, "REJECTED");
-  }
-
-  return approveAssociationSafely(associationId, association.doctorId);
-};
-
-const approveAssociationSafely = async (associationId, doctorId) => {
-  try {
-    return await prisma.$transaction(
-      async (tx) => {
-        const current = await tx.doctorClinicAssociation.findUnique({ where: { id: associationId } });
-        if (!current || current.status !== "PENDING") {
-          throw new ApiError(
-            400,
-            `This request has already been ${current ? current.status.toLowerCase() : "removed"}`
-          );
-        }
-
-        const existingApproved = await tx.doctorClinicAssociation.findMany({
-          where: { doctorId, status: "APPROVED" },
-        });
-
-        const conflict = findConflict(current, existingApproved);
-        if (conflict) {
-          throw new ApiError(
-            409,
-            `Cannot approve — this overlaps with an already-approved schedule (${conflict.dayOfWeek} ${conflict.startTime}-${conflict.endTime}) at another clinic`
-          );
-        }
-
-        return tx.doctorClinicAssociation.update({ where: { id: associationId }, data: { status: "APPROVED" } });
-      },
-      { isolation: Prisma.TransactionIsolationLevel.Serializable }
-    );
-  } catch (err) {
-    if (err instanceof ApiError) throw err;
-    if (err.code === "P2034") {
-      throw new ApiError(409, "This approval conflicted with another concurrent request — please try again");
-    }
-    throw err;
-  }
-};
-
-export const cancelAssociation = async (userId, userRole, associationId) => {
-  const association = await findAssociationById(associationId);
-  if (!association) throw new ApiError(404, "Association not found");
-
-  if (userRole === "DOCTOR") {
-    const doctor = await findDoctorByUserId(userId);
-    if (!doctor || doctor.id !== association.doctorId) {
-      throw new ApiError(403, "This association does not belong to you");
-    }
-  } else if (userRole === "CLINIC") {
-    const clinic = await findClinicByUserId(userId);
-    if (!clinic || clinic.id !== association.clinicId) {
-      throw new ApiError(403, "This association does not belong to your clinic");
-    }
-  }
-
-  if (association.status === "CANCELLED" || association.status === "REJECTED") {
-    throw new ApiError(400, `This association is already ${association.status.toLowerCase()}`);
-  }
-
-  return updateAssociationStatus(associationId, "CANCELLED");
-};
+// DOCTOR MANAGEMENT & STATUS
+// ==============================================
 
 export const updateConsultationTime = async (user, doctorId, clinicId, minutes) => {
   const doctor = await findDoctorByIdWithUser(doctorId);
@@ -305,29 +308,18 @@ export const updateConsultationTime = async (user, doctorId, clinicId, minutes) 
     if (doctor.userId !== user.id) throw new ApiError(403, "This is not your profile");
   } else if (user.role === "CLINIC") {
     const clinic = await findClinicByUserId(user.id);
-    if (!clinic || clinic.id !== clinicId) {
-      throw new ApiError(403, "You can only manage doctors at your own clinic");
-    }
+    if (!clinic || clinic.id !== clinicId) throw new ApiError(403, "You can only manage doctors at your own clinic");
   } else if (user.role === "RECEPTIONIST") {
     const assignment = await findReceptionistAssignment(user.id, doctorId, clinicId);
-    if (!assignment) {
-      throw new ApiError(403, "You are not assigned to manage this doctor at this clinic");
-    }
+    if (!assignment) throw new ApiError(403, "You are not assigned to manage this doctor at this clinic");
   } else {
     throw new ApiError(403, "You do not have permission to update this setting");
   }
 
-  if (isPrimaryClinic) {
-    return updateDoctorAvgConsultation(doctorId, minutes);
-  }
+  if (isPrimaryClinic) return updateDoctorAvgConsultation(doctorId, minutes);
   return updateAssociationAvgConsultation(association.id, minutes);
 };
 
-// Step 3 (wired into queue.service.js:nextToken): tells a patient a few
-// tokens ahead of the one just called that their turn is approaching.
-// queueId (not doctorId/clinicId/date) is what actually identifies a
-// session now that queues are scoped per scheduleId — see
-// findAppointmentByToken's fix in queue.repository.js.
 export const notifyApproaching = async (queueId, currentToken) => {
   const targetToken = currentToken + APPROACH_THRESHOLD;
   const upcoming = await findAppointmentByToken(queueId, targetToken);
@@ -356,25 +348,19 @@ const assertDoctorClinicManageAccess = async (user, doctorId, clinicId) => {
   if (user.role === "SUPER_ADMIN" || user.role === "ADMIN") return;
 
   if (user.role === "DOCTOR") {
-    if (doctor.userId !== user.id) {
-      throw new ApiError(403, "You can only manage your own schedule");
-    }
+    if (doctor.userId !== user.id) throw new ApiError(403, "You can only manage your own schedule");
     return;
   }
 
   if (user.role === "CLINIC") {
     const clinic = await findClinicByUserId(user.id);
-    if (!clinic || clinic.id !== clinicId) {
-      throw new ApiError(403, "You can only manage doctors at your own clinic");
-    }
+    if (!clinic || clinic.id !== clinicId) throw new ApiError(403, "You can only manage doctors at your own clinic");
     return;
   }
 
   if (user.role === "RECEPTIONIST") {
     const assignment = await findReceptionistAssignment(user.id, doctorId, clinicId);
-    if (!assignment) {
-      throw new ApiError(403, "You are not assigned to manage this doctor at this clinic");
-    }
+    if (!assignment) throw new ApiError(403, "You are not assigned to manage this doctor at this clinic");
     return;
   }
 
@@ -485,17 +471,10 @@ export const resumeConsultation = async (user, doctorId, clinicId) => {
   return { status: "NORMAL" };
 };
 
-
-// ==============================================
-// 🟢 DOCTOR FETCH & STATUS UPDATE SERVICES
-// ==============================================
-
-// 1. ALL DOCTORS (সমস্ত ডাক্তার, সাথে তাদের লাইভ স্ট্যাটাস)
 export const fetchAllDoctors = async () => {
   return await searchDoctorsAdvanced({});
 };
 
-// 2. FEATURED DOCTORS (ফিচারড ডাক্তার)
 export const fetchFeaturedDoctors = async () => {
   const doctors = await searchDoctorsAdvancedDB({});
   return doctors
@@ -510,18 +489,13 @@ export const fetchFeaturedDoctors = async () => {
     });
 };
 
-// 3. AVAILABLE DOCTORS (যাদের আজকের স্লট এখনো ফুল হয়নি)
 export const fetchAvailableDoctors = async () => {
   return await searchDoctorsAdvanced({ availableToday: true });
 };
 
-// 4. LIVE DOCTORS (যারা বর্তমানে চেম্বারে রোগী দেখছেন)
 export const fetchLiveDoctors = async () => {
   return await searchDoctorsAdvanced({ liveNow: true });
 };
-
-
-// ==============================================
 
 export const updateFeaturedStatus = async (doctorId, isFeatured, featuredOrder) => {
   const doctor = await getDoctorByIdWithClinic(doctorId);
@@ -566,7 +540,6 @@ export const uploadProfilePhoto = async (doctorUserId, fileBuffer) => {
   if (!doctor) throw new ApiError(404, "Doctor profile not found");
 
   const oldPhoto = doctor.profilePhoto;
-
   const result = await uploadBufferToCloudinary(fileBuffer, "jeet/doctors");
   
   const updatedDoctor = await updateDoctorProfilePhoto(doctor.id, result.secure_url);
@@ -623,20 +596,21 @@ export const getDoctorProfileWithClinics = async (doctorId, locationCity = null)
 
   const knownClinicIds = new Set([doctor.clinicId, ...associatedClinics.map(c => c.id)].filter(Boolean));
 
-  // FIX: DoctorSchedule (the model that actually drives bookable
-  // availability) is a separate doctor<->clinic relationship from
-  // DoctorClinicAssociation (a legacy request/approval record). A doctor
-  // can have real, active schedules at a clinic that never went through
-  // (or has since fallen out of sync with) that association flow — without
-  // this, such a clinic silently never appeared in "Chamber Information" /
-  // the Doctor -> Clinic booking flow at all, even though patients could
-  // book there via the direct clinic page. We add any such clinic here,
-  // additively — nothing above is removed or altered.
+  const allAssociatedClinicIds = await prisma.doctorClinicAssociation.findMany({
+    where: { doctorId },
+    select: { clinicId: true },
+  });
+  
+  const excludedClinicIds = new Set([
+    ...knownClinicIds,
+    ...allAssociatedClinicIds.map((a) => a.clinicId),
+  ]);
+
   const scheduleOnlyClinicRows = await prisma.doctorSchedule.findMany({
     where: {
       doctorId,
       isActive: true,
-      clinicId: { notIn: [...knownClinicIds] },
+      clinicId: { notIn: [...excludedClinicIds] },
       ...(locationCity ? { clinic: { city: locationCity } } : {}),
     },
     distinct: ["clinicId"],
@@ -646,12 +620,7 @@ export const getDoctorProfileWithClinics = async (doctorId, locationCity = null)
   const scheduleOnlyClinics = scheduleOnlyClinicRows.map(s => ({
     ...s.clinic,
     isPrimary: false,
-    associationDetails: {
-      // No DoctorClinicAssociation.fee exists for these — fall back to the
-      // doctor's base fee, same fallback the frontend already applies
-      // (`clinic.associationDetails?.fee || doctor.fee`).
-      fee: null,
-    },
+    associationDetails: { fee: null },
   }));
 
   const allClinics = locationCity && doctor.clinic?.city !== locationCity 
@@ -671,6 +640,15 @@ export const addSchedule = async (user, doctorId, clinicId, payload) => {
     throw new ApiError(409, `This schedule conflicts with an existing session (${conflict.startTime}-${conflict.endTime})`);
   }
 
+  // 🟢 AUTO-ACCEPT FIX: Force schedule to be INACTIVE if request is still PENDING
+  const doctor = await prisma.doctor.findUnique({ where: { id: doctorId } });
+  const isNative = doctor.clinicId === clinicId;
+  const association = await prisma.doctorClinicAssociation.findFirst({
+    where: { doctorId, clinicId },
+    orderBy: { createdAt: "desc" }
+  });
+  const isApproved = isNative || (association && association.status === "APPROVED");
+
   const created = await createDoctorSchedule({
     doctorId,
     clinicId,
@@ -679,8 +657,7 @@ export const addSchedule = async (user, doctorId, clinicId, payload) => {
     maxPatients: payload.maxPatients,
     recurrenceType: payload.recurrenceType,
     recurrencePattern: payload.recurrencePattern,
-    isActive: payload.isActive,
-    // Clinic can disable ONLINE booking for this session; walk-in/reception still work.
+    isActive: isApproved ? payload.isActive : false, // <--- Stops Auto-Accept illusion
     onlineBookingEnabled: payload.onlineBookingEnabled ?? true,
   });
   emitLiveDoctorsChanged({ reason: "schedule_added", doctorId, clinicId });
@@ -784,7 +761,6 @@ export const removeScheduleException = async (user, scheduleId, exceptionId) => 
   return { deleted: true };
 };
 
-// === NEW: Step 29 Advanced Search ===
 export const searchDoctorsAdvanced = async (filters) => {
   const doctors = await searchDoctorsAdvancedDB(filters);
 
@@ -798,12 +774,9 @@ export const searchDoctorsAdvanced = async (filters) => {
     return { ...doctor, liveStatus: status };
   });
 
-  // 🟢 FIX: Live এবং Available এর ফিল্টার আলাদা করা হলো
   if (filters.liveNow === true) {
-    // শুধুমাত্র যারা এই মুহূর্তে Live আছে
     mappedDoctors = mappedDoctors.filter(doc => doc.liveStatus?.isLive === true);
   } else if (filters.availableToday === true) {
-    // শুধুমাত্র যাদের আজকের স্লট অ্যাভেইলেবল আছে
     mappedDoctors = mappedDoctors.filter(doc => doc.liveStatus?.isAvailable === true);
   }
 
