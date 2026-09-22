@@ -1,8 +1,15 @@
 import { notifyUser } from "../notification/notification.service.js";
 import ApiError from "../../utils/apiError.js";
 import { hashPassword } from "../auth/auth.helper.js";
-import { findUserByEmail, findUserByPhone } from "../auth/auth.repository.js";
-import { updateClinicProfile } from "../clinic/clinic.repository.js";
+
+import {
+  findUserByEmail,
+  findUserByPhone,
+} from "../auth/auth.repository.js";
+
+import {
+  updateClinicProfile,
+} from "../clinic/clinic.repository.js";
 
 import {
   findAllUsers,
@@ -14,140 +21,443 @@ import {
 import {
   getPlatformSettings,
   updatePlatformSettings,
+
   findAllClinics,
   countClinics,
-  updateClinicByAdmin, 
-  softDeleteClinic, 
+  updateClinicByAdmin,
+  softDeleteClinic,
   findClinicByIdRaw,
   setClinicApproval,
+
   findAllDoctorsUnverified,
   findDoctorByIdRaw,
   setDoctorVerification,
+  unverifyDoctorById,
+  softDeleteDoctor,
+
   getPlatformStats,
+
   createAdminUser,
   createClinicUser,
   createDoctorUser,
+
   createDiagnosticCenterUser,
+
   findAllAppointments,
+
   updateDiagnosticCenterProfile,
   findAllDiagnosticCenters,
   findDiagnosticCenterByIdRaw,
   setDiagnosticCenterApproval,
+
   setDoctorFeatured,
   findAllDoctorsAdmin,
   findFeaturedDoctors,
 } from "./admin.repository.js";
 
+// ======================================================
+// SETTINGS
+// ======================================================
+
 export const getSettings = async () => {
-  const settings = await getPlatformSettings();
-  if (!settings) throw new ApiError(500, "Platform settings not initialized");
+  const settings =
+    await getPlatformSettings();
+
+  if (!settings) {
+    throw new ApiError(
+      500,
+      "Platform settings not initialized"
+    );
+  }
+
   return settings;
 };
 
-export const updateSettings = async ({ bookingWindowMinutes }) => {
-  const settings = await getPlatformSettings();
-  if (!settings) throw new ApiError(500, "Platform settings not initialized");
-  return updatePlatformSettings(settings.id, { bookingWindowMinutes });
+export const updateSettings = async ({
+  bookingWindowMinutes,
+}) => {
+  const settings =
+    await getPlatformSettings();
+
+  if (!settings) {
+    throw new ApiError(
+      500,
+      "Platform settings not initialized"
+    );
+  }
+
+  return updatePlatformSettings(
+    settings.id,
+    {
+      bookingWindowMinutes,
+    }
+  );
 };
 
-export const listClinics = async ({ isApproved, page, limit }) => {
-  const [clinics, total] = await Promise.all([
-    findAllClinics({ isApproved, page, limit }),
-    countClinics(isApproved),
-  ]);
-  return { clinics, total, page, limit };
+// ======================================================
+// CLINICS
+// ======================================================
+
+export const listClinics = async ({
+  isApproved,
+  page,
+  limit,
+}) => {
+  const [clinics, total] =
+    await Promise.all([
+      findAllClinics({
+        isApproved,
+        page,
+        limit,
+      }),
+
+      countClinics(isApproved),
+    ]);
+
+  return {
+    clinics,
+    total,
+    page,
+    limit,
+  };
 };
 
-export const approveClinic = async (clinicId) => {
-  const clinic = await findClinicByIdRaw(clinicId);
-  if (!clinic) throw new ApiError(404, "Clinic not found");
-  if (clinic.isApproved) throw new ApiError(400, "Clinic is already approved");
+export const approveClinic = async (
+  clinicId
+) => {
+  const clinic =
+    await findClinicByIdRaw(
+      clinicId
+    );
 
-  const updated = await setClinicApproval(clinicId, true);
+  if (!clinic) {
+    throw new ApiError(
+      404,
+      "Clinic not found"
+    );
+  }
+
+  if (clinic.isApproved) {
+    throw new ApiError(
+      400,
+      "Clinic is already approved"
+    );
+  }
+
+  const updated =
+    await setClinicApproval(
+      clinicId,
+      true
+    );
 
   await notifyUser({
     userId: clinic.userId,
     type: "CLINIC_APPROVED",
-    title: "Your clinic has been approved",
-    message: `${clinic.clinicName} is now approved and visible to patients.`,
+    title:
+      "Your clinic has been approved",
+    message:
+      `${clinic.clinicName} is now approved and visible to patients.`,
   });
 
   return updated;
 };
 
-export const revokeClinicApproval = async (clinicId) => {
-  const clinic = await findClinicByIdRaw(clinicId);
-  if (!clinic) throw new ApiError(404, "Clinic not found");
+export const revokeClinicApproval = async (
+  clinicId
+) => {
+  const clinic =
+    await findClinicByIdRaw(
+      clinicId
+    );
 
-  const updated = await setClinicApproval(clinicId, false);
+  if (!clinic) {
+    throw new ApiError(
+      404,
+      "Clinic not found"
+    );
+  }
+
+  const updated =
+    await setClinicApproval(
+      clinicId,
+      false
+    );
 
   await notifyUser({
     userId: clinic.userId,
     type: "CLINIC_REVOKED",
-    title: "Your clinic approval has been revoked",
-    message: `${clinic.clinicName}'s approval has been revoked by the admin. Please contact support.`,
+    title:
+      "Your clinic approval has been revoked",
+    message:
+      `${clinic.clinicName}'s approval has been revoked by the admin. Please contact support.`,
   });
 
   return updated;
 };
 
-export const listUnverifiedDoctors = async () => {
-  return findAllDoctorsUnverified();
-};
+// ======================================================
+// DOCTORS - VERIFICATION
+// ======================================================
 
-export const verifyDoctor = async (doctorId) => {
-  const doctor = await findDoctorByIdRaw(doctorId);
-  if (!doctor) throw new ApiError(404, "Doctor not found");
-  if (doctor.isVerified) throw new ApiError(400, "Doctor is already verified");
+export const listUnverifiedDoctors =
+  async () => {
+    return findAllDoctorsUnverified();
+  };
 
-  const updated = await setDoctorVerification(doctorId, true);
+export const verifyDoctor = async (
+  doctorId
+) => {
+  const doctor =
+    await findDoctorByIdRaw(
+      doctorId
+    );
+
+  if (!doctor) {
+    throw new ApiError(
+      404,
+      "Doctor not found"
+    );
+  }
+
+  if (doctor.isVerified) {
+    throw new ApiError(
+      400,
+      "Doctor is already verified"
+    );
+  }
+
+  const updated =
+    await setDoctorVerification(
+      doctorId,
+      true
+    );
 
   await notifyUser({
     userId: doctor.userId,
     type: "DOCTOR_VERIFIED",
     title: "You're verified!",
-    message: "Your doctor profile has been verified by the admin. Patients can now book you.",
+    message:
+      "Your doctor profile has been verified by the admin. Patients can now book you.",
   });
 
   return updated;
 };
 
-export const listUsers = async ({ role, page, limit }) => {
-  const [users, total] = await Promise.all([
-    findAllUsers({ role, page, limit }),
-    countUsers(role),
-  ]);
-  return { users, total, page, limit };
-};
+// ======================================================
+// UNVERIFY DOCTOR
+// ======================================================
 
-export const toggleUserStatus = async (userId, isActive) => {
-  const user = await findUserByIdRaw(userId);
-  if (!user) throw new ApiError(404, "User not found");
-  if (user.role === "SUPER_ADMIN") {
-    throw new ApiError(403, "Cannot modify a Super Admin account");
+export const unverifyDoctor = async (
+  doctorId
+) => {
+  const doctor =
+    await findDoctorByIdRaw(
+      doctorId
+    );
+
+  if (!doctor) {
+    throw new ApiError(
+      404,
+      "Doctor not found"
+    );
   }
 
-  return setUserActiveStatus(userId, isActive);
+  if (!doctor.isVerified) {
+    throw new ApiError(
+      400,
+      "Doctor is already unverified"
+    );
+  }
+
+  const updated =
+    await unverifyDoctorById(
+      doctorId
+    );
+
+  await notifyUser({
+    userId: doctor.userId,
+    type: "DOCTOR_UNVERIFIED",
+    title:
+      "Doctor verification revoked",
+    message:
+      "Your doctor profile verification has been revoked by the admin. Please contact support.",
+  });
+
+  return updated;
 };
+
+// ======================================================
+// DELETE / DEACTIVATE DOCTOR
+// ======================================================
+
+export const deleteDoctor = async (
+  doctorId
+) => {
+  const doctor =
+    await findDoctorByIdRaw(
+      doctorId
+    );
+
+  if (!doctor) {
+    throw new ApiError(
+      404,
+      "Doctor not found"
+    );
+  }
+
+  try {
+    const updated =
+      await softDeleteDoctor(
+        doctorId
+      );
+
+    await notifyUser({
+      userId: doctor.userId,
+      type: "DOCTOR_DEACTIVATED",
+      title:
+        "Doctor account deactivated",
+      message:
+        "Your doctor account has been deactivated by the admin. Please contact support.",
+    });
+
+    return updated;
+  } catch (error) {
+    console.error(
+      "Delete doctor error:",
+      error
+    );
+
+    if (
+      error instanceof ApiError
+    ) {
+      throw error;
+    }
+
+    throw new ApiError(
+      500,
+      "Failed to delete doctor"
+    );
+  }
+};
+
+// ======================================================
+// USERS
+// ======================================================
+
+export const listUsers = async ({
+  role,
+  page,
+  limit,
+}) => {
+  const [users, total] =
+    await Promise.all([
+      findAllUsers({
+        role,
+        page,
+        limit,
+      }),
+
+      countUsers(role),
+    ]);
+
+  return {
+    users,
+    total,
+    page,
+    limit,
+  };
+};
+
+export const toggleUserStatus = async (
+  userId,
+  isActive
+) => {
+  const user =
+    await findUserByIdRaw(
+      userId
+    );
+
+  if (!user) {
+    throw new ApiError(
+      404,
+      "User not found"
+    );
+  }
+
+  if (user.role === "SUPER_ADMIN") {
+    throw new ApiError(
+      403,
+      "Cannot modify a Super Admin account"
+    );
+  }
+
+  return setUserActiveStatus(
+    userId,
+    isActive
+  );
+};
+
+// ======================================================
+// STATS
+// ======================================================
 
 export const getStats = async () => {
   return getPlatformStats();
 };
 
-export const createAdmin = async ({ name, email, password, phone }) => {
-  if (email && (await findUserByEmail(email))) {
-    throw new ApiError(409, "A user with this email already exists");
-  }
-  if (phone && (await findUserByPhone(phone))) {
-    throw new ApiError(409, "A user with this phone number already exists");
+// ======================================================
+// CREATE ADMIN
+// ======================================================
+
+export const createAdmin = async ({
+  name,
+  email,
+  password,
+  phone,
+}) => {
+  if (
+    email &&
+    (await findUserByEmail(email))
+  ) {
+    throw new ApiError(
+      409,
+      "A user with this email already exists"
+    );
   }
 
-  const hashedPassword = await hashPassword(password);
-  const user = await createAdminUser({ name, email, phone, password: hashedPassword });
+  if (
+    phone &&
+    (await findUserByPhone(phone))
+  ) {
+    throw new ApiError(
+      409,
+      "A user with this phone number already exists"
+    );
+  }
 
-  const { password: _pw, refreshToken, ...safeUser } = user;
+  const hashedPassword =
+    await hashPassword(password);
+
+  const user =
+    await createAdminUser({
+      name,
+      email,
+      phone,
+      password: hashedPassword,
+    });
+
+  const {
+    password: _pw,
+    refreshToken,
+    ...safeUser
+  } = user;
+
   return safeUser;
 };
+
+// ======================================================
+// CREATE DOCTOR
+// ======================================================
 
 export const createDoctor = async ({
   name,
@@ -161,25 +471,59 @@ export const createDoctor = async ({
   experience,
   fee,
 }) => {
-  if (email && (await findUserByEmail(email))) {
-    throw new ApiError(409, "A user with this email already exists");
+  if (
+    email &&
+    (await findUserByEmail(email))
+  ) {
+    throw new ApiError(
+      409,
+      "A user with this email already exists"
+    );
   }
-  if (phone && (await findUserByPhone(phone))) {
-    throw new ApiError(409, "A user with this phone number already exists");
+
+  if (
+    phone &&
+    (await findUserByPhone(phone))
+  ) {
+    throw new ApiError(
+      409,
+      "A user with this phone number already exists"
+    );
   }
 
   if (clinicId) {
-    const clinic = await findClinicByIdRaw(clinicId);
-    if (!clinic) throw new ApiError(404, "Clinic not found");
+    const clinic =
+      await findClinicByIdRaw(
+        clinicId
+      );
+
+    if (!clinic) {
+      throw new ApiError(
+        404,
+        "Clinic not found"
+      );
+    }
   }
 
-  const hashedPassword = await hashPassword(password);
+  const hashedPassword =
+    await hashPassword(password);
 
   try {
-    const { user, doctor } = await createDoctorUser({
-      userData: { name, email, phone, password: hashedPassword },
+    const {
+      user,
+      doctor,
+    } = await createDoctorUser({
+      userData: {
+        name,
+        email,
+        phone,
+        password: hashedPassword,
+      },
+
       doctorData: {
-        clinicId: clinicId ?? null,
+        clinicId:
+          clinicId ?? null,
+
         specialization,
         specializationIds,
         qualification,
@@ -188,164 +532,428 @@ export const createDoctor = async ({
       },
     });
 
-    const { password: _pw, refreshToken, ...safeUser } = user;
-    return { user: safeUser, doctor };
+    const {
+      password: _pw,
+      refreshToken,
+      ...safeUser
+    } = user;
+
+    return {
+      user: safeUser,
+      doctor,
+    };
   } catch (error) {
-    if (error.code === "P2002" && error.meta?.target?.includes("phone")) {
-      throw new ApiError(409, "This phone number is already registered.");
+    if (
+      error.code === "P2002" &&
+      error.meta?.target?.includes(
+        "phone"
+      )
+    ) {
+      throw new ApiError(
+        409,
+        "This phone number is already registered."
+      );
     }
+
     throw error;
   }
 };
 
-export const listAllBookings = async ({ clinicId, status, from, to, page, limit }) => {
+// ======================================================
+// BOOKINGS
+// ======================================================
+
+export const listAllBookings = async ({
+  clinicId,
+  status,
+  from,
+  to,
+  page,
+  limit,
+}) => {
   return findAllAppointments({
     clinicId,
     status,
-    from: from ? new Date(from) : undefined,
-    to: to ? new Date(to) : undefined,
+
+    from: from
+      ? new Date(from)
+      : undefined,
+
+    to: to
+      ? new Date(to)
+      : undefined,
+
     page,
     limit,
   });
 };
 
-export const createClinic = async ({ name, email, password, phone, clinicName, address, city, state, pincode }) => {
-  if (email && (await findUserByEmail(email))) {
-    throw new ApiError(409, "A user with this email already exists");
-  }
-  if (phone && (await findUserByPhone(phone))) {
-    throw new ApiError(409, "A user with this phone number already exists");
+// ======================================================
+// CREATE CLINIC
+// ======================================================
+
+export const createClinic = async ({
+  name,
+  email,
+  password,
+  phone,
+  clinicName,
+  address,
+  city,
+  state,
+  pincode,
+}) => {
+  if (
+    email &&
+    (await findUserByEmail(email))
+  ) {
+    throw new ApiError(
+      409,
+      "A user with this email already exists"
+    );
   }
 
-  const hashedPassword = await hashPassword(password);
+  if (
+    phone &&
+    (await findUserByPhone(phone))
+  ) {
+    throw new ApiError(
+      409,
+      "A user with this phone number already exists"
+    );
+  }
+
+  const hashedPassword =
+    await hashPassword(password);
 
   try {
-    const { user, clinic } = await createClinicUser({
-      userData: { name, email, phone, password: hashedPassword },
+    const {
+      user,
+      clinic,
+    } = await createClinicUser({
+      userData: {
+        name,
+        email,
+        phone,
+        password: hashedPassword,
+      },
+
       clinicName,
     });
 
     let finalClinic = clinic;
-    if (address || city || state || pincode) {
-      finalClinic = await updateClinicProfile(clinic.id, { clinicName, address, city, state, pincode });
+
+    if (
+      address ||
+      city ||
+      state ||
+      pincode
+    ) {
+      finalClinic =
+        await updateClinicProfile(
+          clinic.id,
+          {
+            clinicName,
+            address,
+            city,
+            state,
+            pincode,
+          }
+        );
     }
 
-    const { password: _pw, refreshToken, ...safeUser } = user;
-    return { user: safeUser, clinic: finalClinic };
-    
+    const {
+      password: _pw,
+      refreshToken,
+      ...safeUser
+    } = user;
+
+    return {
+      user: safeUser,
+      clinic: finalClinic,
+    };
   } catch (error) {
-    if (error.code === 'P2002' && error.meta?.target?.includes('phone')) {
-      throw new ApiError(409, "This phone number is already registered.");
+    if (
+      error.code === "P2002" &&
+      error.meta?.target?.includes(
+        "phone"
+      )
+    ) {
+      throw new ApiError(
+        409,
+        "This phone number is already registered."
+      );
     }
+
     throw error;
   }
 };
 
-// 🟢 Diagnostic Center creation logic updated to include new fields
-export const createDiagnosticCenter = async ({ 
-  name, email, password, phone, centerName, 
-  address, city, state, pincode, 
-  whatsapp, googleMapsUrl, hasHomeService 
-}) => {
-  const existing = await findUserByEmail(email);
-  if (existing) throw new ApiError(409, "A user with this email already exists");
+// ======================================================
+// DIAGNOSTIC CENTER
+// ======================================================
 
-  const hashedPassword = await hashPassword(password);
+export const createDiagnosticCenter =
+  async ({
+    name,
+    email,
+    password,
+    phone,
+    centerName,
+    address,
+    city,
+    state,
+    pincode,
+    whatsapp,
+    googleMapsUrl,
+    hasHomeService,
+  }) => {
+    const existing =
+      await findUserByEmail(email);
 
-  try {
-    const { user, diagnosticCenter } = await createDiagnosticCenterUser({
-      userData: { name, email, phone, password: hashedPassword },
-      centerName,
-    });
-
-    let finalCenter = diagnosticCenter;
-    if (address || city || state || pincode || whatsapp || googleMapsUrl || hasHomeService !== undefined) {
-      finalCenter = await updateDiagnosticCenterProfile(diagnosticCenter.id, { 
-        address, city, state, pincode, 
-        phone, whatsapp, googleMapsUrl, hasHomeService 
-      });
+    if (existing) {
+      throw new ApiError(
+        409,
+        "A user with this email already exists"
+      );
     }
 
-    const { password: _pw, refreshToken, ...safeUser } = user;
-    return { user: safeUser, diagnosticCenter: finalCenter };
-  } catch (error) {
-    if (error.code === 'P2002' && error.meta?.target?.includes('phone')) {
-      throw new ApiError(400, "This phone number is already registered.");
+    const hashedPassword =
+      await hashPassword(password);
+
+    try {
+      const {
+        user,
+        diagnosticCenter,
+      } =
+        await createDiagnosticCenterUser({
+          userData: {
+            name,
+            email,
+            phone,
+            password:
+              hashedPassword,
+          },
+
+          centerName,
+        });
+
+      let finalCenter =
+        diagnosticCenter;
+
+      if (
+        address ||
+        city ||
+        state ||
+        pincode ||
+        whatsapp ||
+        googleMapsUrl ||
+        hasHomeService !== undefined
+      ) {
+        finalCenter =
+          await updateDiagnosticCenterProfile(
+            diagnosticCenter.id,
+            {
+              address,
+              city,
+              state,
+              pincode,
+              phone,
+              whatsapp,
+              googleMapsUrl,
+              hasHomeService,
+            }
+          );
+      }
+
+      const {
+        password: _pw,
+        refreshToken,
+        ...safeUser
+      } = user;
+
+      return {
+        user: safeUser,
+        diagnosticCenter:
+          finalCenter,
+      };
+    } catch (error) {
+      if (
+        error.code === "P2002" &&
+        error.meta?.target?.includes(
+          "phone"
+        )
+      ) {
+        throw new ApiError(
+          400,
+          "This phone number is already registered."
+        );
+      }
+
+      throw error;
     }
-    throw error;
-  }
-};
+  };
 
-export const listDiagnosticCenters = async ({ isApproved, page, limit }) => {
-  return findAllDiagnosticCenters({ isApproved, page, limit });
-};
-
-export const approveDiagnosticCenter = async (id) => {
-  const center = await findDiagnosticCenterByIdRaw(id);
-  if (!center) throw new ApiError(404, "Diagnostic center not found");
-  if (center.isApproved) throw new ApiError(400, "Diagnostic center is already approved");
-  return setDiagnosticCenterApproval(id, true);
-};
-
-export const revokeDiagnosticCenterApproval = async (id) => {
-  const center = await findDiagnosticCenterByIdRaw(id);
-  if (!center) throw new ApiError(404, "Diagnostic center not found");
-  return setDiagnosticCenterApproval(id, false);
-};
-
-export const setDoctorFeaturedStatus = async (doctorId, isFeatured, featuredOrder) => {
-  const doctor = await findDoctorByIdRaw(doctorId);
-  if (!doctor) throw new ApiError(404, "Doctor not found");
-
-  return setDoctorFeatured(doctorId, isFeatured, featuredOrder);
-};
-
-export const listFeaturedDoctors = async () => {
-  return findFeaturedDoctors();
-};
-
-export const editClinic = async (clinicId, payload) => {
-  const clinic = await findClinicByIdRaw(clinicId);
-  if (!clinic) throw new ApiError(404, "Clinic not found");
-  
-  return updateClinicByAdmin(clinicId, payload);
-};
-
-export const deactivateClinic = async (clinicId) => {
-  const clinic = await findClinicByIdRaw(clinicId);
-  if (!clinic) throw new ApiError(404, "Clinic not found");
-
-  try {
-    return await softDeleteClinic(clinicId);
-  } catch (error) {
-    throw new ApiError(500, "Failed to deactivate clinic");
-  }
-};
-
-
-// ... existing repo functions ...
-
-export const softDeleteDoctor = async (id) => {
-  return prisma.$transaction(async (tx) => {
-    const doctor = await tx.doctor.findUnique({ where: { id } });
-    if (!doctor) throw new Error("Doctor not found");
-
-    // 1. Revoke verification and availability
-    const updatedDoctor = await tx.doctor.update({
-      where: { id },
-      data: { isVerified: false, isAvailable: false }
+export const listDiagnosticCenters =
+  async ({
+    isApproved,
+    page,
+    limit,
+  }) => {
+    return findAllDiagnosticCenters({
+      isApproved,
+      page,
+      limit,
     });
+  };
 
-    // 2. Deactivate the User account
-    await tx.user.update({
-      where: { id: doctor.userId },
-      data: { isActive: false }
-    });
+export const approveDiagnosticCenter =
+  async (id) => {
+    const center =
+      await findDiagnosticCenterByIdRaw(
+        id
+      );
 
-    return updatedDoctor;
-  });
+    if (!center) {
+      throw new ApiError(
+        404,
+        "Diagnostic center not found"
+      );
+    }
+
+    if (center.isApproved) {
+      throw new ApiError(
+        400,
+        "Diagnostic center is already approved"
+      );
+    }
+
+    return setDiagnosticCenterApproval(
+      id,
+      true
+    );
+  };
+
+export const revokeDiagnosticCenterApproval =
+  async (id) => {
+    const center =
+      await findDiagnosticCenterByIdRaw(
+        id
+      );
+
+    if (!center) {
+      throw new ApiError(
+        404,
+        "Diagnostic center not found"
+      );
+    }
+
+    return setDiagnosticCenterApproval(
+      id,
+      false
+    );
+  };
+
+// ======================================================
+// FEATURED DOCTOR
+// ======================================================
+
+export const setDoctorFeaturedStatus =
+  async (
+    doctorId,
+    isFeatured,
+    featuredOrder
+  ) => {
+    const doctor =
+      await findDoctorByIdRaw(
+        doctorId
+      );
+
+    if (!doctor) {
+      throw new ApiError(
+        404,
+        "Doctor not found"
+      );
+    }
+
+    return setDoctorFeatured(
+      doctorId,
+      isFeatured,
+      featuredOrder
+    );
+  };
+
+export const listFeaturedDoctors =
+  async () => {
+    return findFeaturedDoctors();
+  };
+
+// ======================================================
+// EDIT CLINIC
+// ======================================================
+
+export const editClinic = async (
+  clinicId,
+  payload
+) => {
+  const clinic =
+    await findClinicByIdRaw(
+      clinicId
+    );
+
+  if (!clinic) {
+    throw new ApiError(
+      404,
+      "Clinic not found"
+    );
+  }
+
+  return updateClinicByAdmin(
+    clinicId,
+    payload
+  );
 };
 
-export const listAllDoctors = async () => {
-  return findAllDoctorsAdmin();
-};
+// ======================================================
+// DEACTIVATE CLINIC
+// ======================================================
+
+export const deactivateClinic =
+  async (clinicId) => {
+    const clinic =
+      await findClinicByIdRaw(
+        clinicId
+      );
+
+    if (!clinic) {
+      throw new ApiError(
+        404,
+        "Clinic not found"
+      );
+    }
+
+    try {
+      return await softDeleteClinic(
+        clinicId
+      );
+    } catch (error) {
+      console.error(
+        "Deactivate clinic error:",
+        error
+      );
+
+      throw new ApiError(
+        500,
+        "Failed to deactivate clinic"
+      );
+    }
+  };
+
+// ======================================================
+// LIST ALL DOCTORS
+// ======================================================
+
+export const listAllDoctors =
+  async () => {
+    return findAllDoctorsAdmin();
+  };
