@@ -119,19 +119,31 @@ export const processWalkInAppointment = async (user, { doctorId, scheduleId, pho
 };
 
 // 🚀 ULTRA-FAST BOOKING CORE 🚀
+// 🚀 ULTRA-FAST BOOKING CORE 🚀
 const bookAppointmentCore = async ({ doctorId, clinicId, scheduleId, patientId, patientUserId, date, bookingSource }) => {
   try {
     // 1. Parallel Fetch (Initial Lookups)
-    const [doctor, schedule] = await Promise.all([
+    const [doctor, schedule, association] = await Promise.all([
       getDoctorById(doctorId),
       getDoctorScheduleById(scheduleId),
+      // Fetch association directly to check relationship-specific settings
+      prisma.doctorClinicAssociation.findFirst({ where: { doctorId, clinicId, status: "APPROVED" } })
     ]);
 
     if (!doctor) throw new ApiError(404, "Doctor not found");
     if (!doctor.isVerified) throw new ApiError(403, "Doctor is not yet verified");
     if (!schedule || schedule.doctorId !== doctorId || schedule.clinicId !== clinicId) throw new ApiError(404, "Invalid schedule selected");
     if (!schedule.isActive) throw new ApiError(400, "This schedule is currently inactive");
-    if (bookingSource === "ONLINE" && schedule.onlineBookingEnabled === false) throw new ApiError(400, "Online booking is currently turned off for this doctor/session");
+    
+    // 🟢 ISSUE 6 FIX: Enforce Doctor-Clinic specific online booking status
+    if (bookingSource === "ONLINE") {
+      const isPrimary = doctor.clinicId === clinicId;
+      const isOnlineEnabled = isPrimary ? (doctor.onlineBookingEnabled ?? true) : (association?.onlineBookingEnabled ?? true);
+      
+      if (isOnlineEnabled === false) {
+         throw new ApiError(400, "Online booking is currently turned off for this doctor at this clinic. Please book by call.");
+      }
+    }
 
     // 2. Parallel Fetch (Conflicts, Limits, Exceptions)
     const [exception, conflict, restrictionStatus] = await Promise.all([

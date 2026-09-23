@@ -496,4 +496,30 @@ router.get("/requests/received", clinicController.getMyReceivedRequests);
  */
 router.patch("/availability", clinicController.toggleAvailability);
 
+
+/**
+ * @swagger
+ * /clinic/doctors/{doctorId}/online-booking:
+ *   patch:
+ *     summary: Toggle online booking specifically for a doctor at this clinic
+ *     tags: [Clinic]
+ *     parameters:
+ *       - in: path
+ *         name: doctorId
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [onlineBookingEnabled]
+ *             properties:
+ *               onlineBookingEnabled: { type: boolean }
+ *     responses:
+ *       200: { description: Online booking status updated }
+ */
+router.patch("/doctors/:doctorId/online-booking", clinicController.toggleDoctorOnlineBooking);
+
 export default router;

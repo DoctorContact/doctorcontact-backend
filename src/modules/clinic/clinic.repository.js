@@ -264,4 +264,23 @@ export const getClinicProfileWithDoctorsRepo = (id) => {
   });
 };
 
+export const updateDoctorOnlineBookingStatus = async (doctorId, clinicId, isPrimary, onlineBookingEnabled) => {
+  if (isPrimary) {
+    return prisma.doctor.update({
+      where: { id: doctorId },
+      data: { onlineBookingEnabled },
+    });
+  } else {
+    const association = await prisma.doctorClinicAssociation.findFirst({
+      where: { doctorId, clinicId, status: "APPROVED" },
+    });
+    if (!association) throw new Error("Doctor is not associated with your clinic");
+
+    return prisma.doctorClinicAssociation.update({
+      where: { id: association.id },
+      data: { onlineBookingEnabled },
+    });
+  }
+};
+
 export const updateClinicFeaturedStatus = (id, data) => prisma.clinic.update({ where: { id }, data });

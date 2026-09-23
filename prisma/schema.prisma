@@ -94,6 +94,7 @@ model Doctor {
   // is associated with a clinic via DoctorClinicAssociation.
   clinicId               String?
   medicalSystem          MedicalSystem             @default(ALLOPATHY)
+  onlineBookingEnabled   Boolean                   @default(true) 
   specialization         String?
   qualification          String?
   experience             Int?
@@ -289,6 +290,7 @@ model DoctorClinicAssociation {
   clinicId    String
   fee         Float?
   queueMode   QueueMode     @default(LIVE)
+  onlineBookingEnabled Boolean @default(true) // 🟢 NEW
   dayOfWeek   DayOfWeek
   startTime   String
   endTime     String

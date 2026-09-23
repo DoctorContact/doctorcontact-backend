@@ -392,7 +392,12 @@ export const fetchClinicProfileById = async (id) => {
   const primaryDoctors = clinic.doctors.map(doc => ({
     ...doc,
     isPrimary: true,
-    associationDetails: { fee: doc.fee, startTime: doc.startTime, queueMode: doc.queueMode }
+    associationDetails: { 
+      fee: doc.fee, 
+      startTime: doc.startTime, 
+      queueMode: doc.queueMode,
+      onlineBookingEnabled: doc.onlineBookingEnabled // 🟢 Added this line
+    }
   }));
 
   const associatedDoctors = clinic.doctorAssociations.map(assoc => ({
@@ -403,7 +408,8 @@ export const fetchClinicProfileById = async (id) => {
       dayOfWeek: assoc.dayOfWeek,
       startTime: assoc.startTime,
       endTime: assoc.endTime,
-      queueMode: assoc.queueMode
+      queueMode: assoc.queueMode,
+      onlineBookingEnabled: assoc.onlineBookingEnabled // 🟢 Added this line
     }
   }));
 
@@ -422,4 +428,20 @@ export const toggleFeaturedStatus = async (clinicId, isFeatured, featuredOrder) 
     isFeatured: isFeatured !== undefined ? isFeatured : clinicExists.isFeatured,
     featuredOrder: featuredOrder !== undefined ? featuredOrder : clinicExists.featuredOrder
   });
+};
+
+// ==========================================
+// ISSUE 6: TOGGLE DOCTOR SPECIFIC ONLINE BOOKING
+// ==========================================
+export const toggleDoctorOnlineBookingStatus = async (clinicUserId, doctorId, onlineBookingEnabled) => {
+  const clinic = await clinicRepo.findClinicByUserId(clinicUserId);
+  if (!clinic) throw new ApiError(404, "Clinic profile not found");
+
+  const doctor = await clinicRepo.findDoctorById(doctorId);
+  if (!doctor) throw new ApiError(404, "Doctor not found");
+
+  const isPrimary = doctor.clinicId === clinic.id;
+
+  // 🟢 Call Repository to do the actual DB work
+  return clinicRepo.updateDoctorOnlineBookingStatus(doctorId, clinic.id, isPrimary, onlineBookingEnabled);
 };

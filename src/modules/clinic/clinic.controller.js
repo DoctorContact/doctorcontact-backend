@@ -204,3 +204,23 @@ export const toggleAvailability = asyncHandler(async (req, res) => {
   const clinic = await clinicService.toggleAvailability(req.user.id, isAvailableToday);
   res.status(200).json(new ApiResponse(true, `Clinic availability marked as ${isAvailableToday ? 'Open' : 'Closed'}`, { clinic }));
 });
+
+// ==========================================
+// ISSUE 6: TOGGLE DOCTOR SPECIFIC ONLINE BOOKING
+// ==========================================
+export const toggleDoctorOnlineBooking = asyncHandler(async (req, res) => {
+  const { doctorId } = req.params;
+  const { onlineBookingEnabled } = req.body; // Expecting boolean
+
+  if (typeof onlineBookingEnabled !== "boolean") {
+    throw new ApiError(400, "onlineBookingEnabled must be a boolean");
+  }
+
+  const result = await clinicService.toggleDoctorOnlineBookingStatus(
+    req.user.id,
+    doctorId,
+    onlineBookingEnabled
+  );
+
+  res.status(200).json(new ApiResponse(true, `Online booking ${onlineBookingEnabled ? 'enabled' : 'disabled'} for this doctor`, result));
+});
