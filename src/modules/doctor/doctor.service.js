@@ -795,4 +795,4 @@ export const searchDoctorsAdvanced = async (filters) => {
   }
 
   return mappedDoctors;
-};
+}; 
