@@ -203,9 +203,22 @@ const getDoctorIncludeForStatus = (todayDate) => ({
       address: true, 
       city: true, 
       isAvailableToday: true,
-      // FIXED: Moved inside 'select' instead of using 'include'
       holidays: { where: { date: todayDate } } 
     },
+  },
+  // 🟢 FIX: Include associated clinics so non-native doctors still show their clinic
+  clinicAssociations: {
+    where: { status: "APPROVED" },
+    include: {
+      clinic: {
+        select: {
+          clinicName: true,
+          address: true,
+          city: true,
+          isAvailableToday: true,
+        }
+      }
+    }
   },
   schedules: {
     where: { isActive: true },

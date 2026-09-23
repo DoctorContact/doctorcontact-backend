@@ -465,65 +465,41 @@ export const createDoctor = async ({
   password,
   phone,
   clinicId,
+  medicalSystem, // 🟢 NEW
   specialization,
   specializationIds,
   qualification,
   experience,
   fee,
 }) => {
-  if (
-    email &&
-    (await findUserByEmail(email))
-  ) {
-    throw new ApiError(
-      409,
-      "A user with this email already exists"
-    );
+  if (email && (await findUserByEmail(email))) {
+    throw new ApiError(409, "A user with this email already exists");
   }
 
-  if (
-    phone &&
-    (await findUserByPhone(phone))
-  ) {
-    throw new ApiError(
-      409,
-      "A user with this phone number already exists"
-    );
+  if (phone && (await findUserByPhone(phone))) {
+    throw new ApiError(409, "A user with this phone number already exists");
   }
 
   if (clinicId) {
-    const clinic =
-      await findClinicByIdRaw(
-        clinicId
-      );
-
+    const clinic = await findClinicByIdRaw(clinicId);
     if (!clinic) {
-      throw new ApiError(
-        404,
-        "Clinic not found"
-      );
+      throw new ApiError(404, "Clinic not found");
     }
   }
 
-  const hashedPassword =
-    await hashPassword(password);
+  const hashedPassword = await hashPassword(password);
 
   try {
-    const {
-      user,
-      doctor,
-    } = await createDoctorUser({
+    const { user, doctor } = await createDoctorUser({
       userData: {
         name,
         email,
         phone,
         password: hashedPassword,
       },
-
       doctorData: {
-        clinicId:
-          clinicId ?? null,
-
+        clinicId: clinicId ?? null,
+        medicalSystem, // 🟢 NEW: Save to database
         specialization,
         specializationIds,
         qualification,
@@ -532,29 +508,16 @@ export const createDoctor = async ({
       },
     });
 
-    const {
-      password: _pw,
-      refreshToken,
-      ...safeUser
-    } = user;
+    const { password: _pw, refreshToken, ...safeUser } = user;
 
     return {
       user: safeUser,
       doctor,
     };
   } catch (error) {
-    if (
-      error.code === "P2002" &&
-      error.meta?.target?.includes(
-        "phone"
-      )
-    ) {
-      throw new ApiError(
-        409,
-        "This phone number is already registered."
-      );
+    if (error.code === "P2002" && error.meta?.target?.includes("phone")) {
+      throw new ApiError(409, "This phone number is already registered.");
     }
-
     throw error;
   }
 };

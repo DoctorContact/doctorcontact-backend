@@ -2,6 +2,7 @@ import prisma from "../../config/db.config.js";
 
 export const findClinicByUserId = (userId) => prisma.clinic.findUnique({ where: { userId } });
 export const findClinicById = (id) => prisma.clinic.findUnique({ where: { id } });
+
 export const updateClinicProfile = async (clinicId, data) => {
   return prisma.clinic.update({
     where: { id: clinicId },
@@ -11,8 +12,6 @@ export const updateClinicProfile = async (clinicId, data) => {
       ...(data.city && { city: data.city }),
       ...(data.state && { state: data.state }),
       ...(data.pincode && { pincode: data.pincode }),
-      
-      // 🟢 NEW: Tell Prisma to save these fields
       ...(data.phone !== undefined && { phone: data.phone }),
       ...(data.whatsapp !== undefined && { whatsapp: data.whatsapp }),
       ...(data.googleMapsUrl !== undefined && { googleMapsUrl: data.googleMapsUrl }),
@@ -32,7 +31,6 @@ export const createDoctorWithUser = ({ userData, doctorData, clinicId }) => {
       clinicId,
     };
 
-    // If specialization IDs are provided, link them via the junction table
     if (specializationIds && specializationIds.length > 0) {
       doctorPayload.specializations = {
         create: specializationIds.map((id) => ({ specializationId: id }))
@@ -57,21 +55,14 @@ export const findDoctorsByClinic = async (clinicId) => {
   const nativeDoctors = await prisma.doctor.findMany({
     where: { clinicId: clinicId },
     include: {
-      user: {
-        select: { id: true, name: true, email: true, phone: true, avatar: true, isActive: true }
-      },
-      specializations: {
-        include: { specialization: true }
-      }
+      user: { select: { id: true, name: true, email: true, phone: true, avatar: true, isActive: true } },
+      specializations: { include: { specialization: true } }
     }
   });
 
   // 2. Fetch existing doctors linked via the DoctorClinicAssociation table
   const associations = await prisma.doctorClinicAssociation.findMany({
-    where: { 
-      clinicId: clinicId, 
-      status: "APPROVED" 
-    },
+    where: { clinicId: clinicId, status: "APPROVED" },
     include: {
       doctor: {
         include: {
@@ -82,15 +73,23 @@ export const findDoctorsByClinic = async (clinicId) => {
     }
   });
 
-  // Extract the actual doctor objects from the associations
-  const associatedDoctors = associations.map(assoc => assoc.doctor);
+  // 3. Map associated doctors AND OVERRIDE their base fee with the clinic's custom fee
+  const associatedDoctors = associations.map(assoc => {
+    const doc = assoc.doctor;
+    return {
+      ...doc,
+      // 🟢 FIX: Return the specific clinic's fee so the frontend shows the correct price!
+      fee: assoc.fee !== null && assoc.fee !== undefined ? assoc.fee : doc.fee
+    };
+  });
 
-  // 3. Merge both lists and remove any duplicates just in case
+  // 4. Merge both lists and remove any duplicates
   const allDoctors = [...nativeDoctors, ...associatedDoctors];
   const uniqueDoctors = Array.from(new Map(allDoctors.map(d => [d.id, d])).values());
 
   return uniqueDoctors;
 };
+
 export const findReceptionistsByClinic = (clinicId) => prisma.receptionist.findMany({ where: { clinicId }, include: { user: { select: { id: true, name: true, email: true, phone: true, isActive: true } }, assignedDoctors: { include: { doctor: { include: { user: { select: { name: true } } } } } } } });
 export const findDoctorById = (id) => prisma.doctor.findUnique({ where: { id } });
 export const findReceptionistById = (id) => prisma.receptionist.findUnique({ where: { id } });
@@ -109,6 +108,7 @@ export const assignDoctorsToReceptionist = (receptionistId, clinicId, doctorIds)
 };
 
 export const findAssignedDoctorsForReceptionistUser = (userId) => prisma.receptionist.findUnique({ where: { userId }, include: { assignedDoctors: { include: { doctor: { include: { user: { select: { id: true, name: true, email: true } } } }, clinic: { select: { id: true, clinicName: true } } } } } });
+
 export const findDoctorOrReceptionistUser = async (userId, clinicId) => {
   const doctor = await prisma.doctor.findFirst({ where: { userId, clinicId } });
   if (doctor) return "DOCTOR";
@@ -117,14 +117,36 @@ export const findDoctorOrReceptionistUser = async (userId, clinicId) => {
   return null;
 };
 
-export const updateDoctor = (id, data) => {
+export const updateDoctor = async (id, data, clinicId) => {
   const { specializationIds, ...restData } = data;
+  
+  const doctor = await prisma.doctor.findUnique({ where: { id } });
+  if (!doctor) throw new Error("Doctor not found");
+
+  const isPrimary = doctor.clinicId === clinicId;
   const updatePayload = { ...restData };
 
-  // If specialization IDs are updated, clear old associations and create new ones
+  // 1. If not primary, update the specific association fee
+  if (!isPrimary && clinicId) {
+    const association = await prisma.doctorClinicAssociation.findFirst({
+      where: { doctorId: id, clinicId: clinicId, status: "APPROVED" }
+    });
+
+    if (association && restData.fee !== undefined) {
+      // Update the clinic-specific fee
+      await prisma.doctorClinicAssociation.update({
+        where: { id: association.id },
+        data: { fee: restData.fee }
+      });
+      // 🟢 FIX: Remove fee from the global payload so we don't accidentally overwrite the main profile fee
+      delete updatePayload.fee; 
+    }
+  }
+
+  // 2. ALWAYS update the main profile (Experience, Qualification, Medical System)
   if (specializationIds) {
     updatePayload.specializations = {
-      deleteMany: {}, // Clean up existing links for this doctor
+      deleteMany: {},
       create: specializationIds.map((specId) => ({ specializationId: specId }))
     };
   }
@@ -134,11 +156,9 @@ export const updateDoctor = (id, data) => {
     data: updatePayload 
   });
 };
+
 export const searchClinicsByName = (name) => prisma.clinic.findMany({ where: { isApproved: true, clinicName: { contains: name, mode: "insensitive" } }, select: { id: true, clinicName: true, city: true, address: true, logo: true } });
 
-// Step 55: Advanced clinic search — name, city, and "has a doctor with this
-// specialization" (mirrors doctor search's specializationId filter so the
-// two search experiences stay consistent).
 export const searchClinicsAdvancedDB = async ({ query, city, specializationId }) => {
   const whereClause = { isApproved: true };
 
@@ -190,7 +210,6 @@ export const getHolidayForClinicDate = (clinicId, date) => prisma.clinicHoliday.
 export const findReceptionistByUserId = (userId) => prisma.receptionist.findUnique({ where: { userId }, include: { clinic: true } });
 export const findReceivedRequestsForClinic = (clinicId) => prisma.doctorClinicAssociation.findMany({ where: { clinicId, requestedBy: "DOCTOR" }, include: { doctor: { include: { user: { select: { name: true, email: true, phone: true } } } } }, orderBy: { createdAt: "desc" } });
 
-// Toggle real-time active status
 export const setAutoFollowupEnabled = (clinicId, enabled) =>
   prisma.clinic.update({ where: { id: clinicId }, data: { autoFollowupEnabled: enabled } });
 
@@ -201,18 +220,14 @@ export const updateClinicAvailability = (clinicId, isAvailableToday) => {
   });
 };
 
-// ==========================================
-// PUBLIC APIs for Directory
-// ==========================================
-
 export const findAllApprovedClinics = () => {
   return prisma.clinic.findMany({
     where: { isApproved: true },
     include: {
       user: { select: { name: true, email: true, avatar: true } },
       _count: { select: { doctors: true, doctorAssociations: { where: { status: 'APPROVED' } } } },
-      workingHours: true, // Needed for availability logic
-      holidays: true      // Needed for availability logic
+      workingHours: true, 
+      holidays: true      
     },
     orderBy: { createdAt: 'desc' }
   });
@@ -225,8 +240,8 @@ export const findFeaturedClinics = () => {
     include: {
       user: { select: { name: true, email: true, avatar: true } },
       _count: { select: { doctors: true, doctorAssociations: { where: { status: 'APPROVED' } } } },
-      workingHours: true, // Needed for availability logic
-      holidays: true      // Needed for availability logic
+      workingHours: true, 
+      holidays: true      
     }
   });
 };
@@ -236,8 +251,8 @@ export const getClinicProfileWithDoctorsRepo = (id) => {
     where: { id },
     include: {
       user: { select: { name: true, email: true, avatar: true } },
-      workingHours: true, // Needed for availability logic
-      holidays: true,     // Needed for availability logic
+      workingHours: true, 
+      holidays: true,     
       doctors: {
         include: { user: { select: { name: true, avatar: true } } }
       },

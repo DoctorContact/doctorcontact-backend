@@ -93,6 +93,7 @@ model Doctor {
   // Clinic-scoped features (queues, reception booking) only apply once the doctor
   // is associated with a clinic via DoctorClinicAssociation.
   clinicId               String?
+  medicalSystem          MedicalSystem             @default(ALLOPATHY)
   specialization         String?
   qualification          String?
   experience             Int?
@@ -782,4 +783,10 @@ enum DoctorOperationalStatus {
   NORMAL
   RUNNING_LATE
   PAUSED
+}
+
+enum MedicalSystem {
+  ALLOPATHY
+  HOMEOPATHY
+  AYURVEDA
 }

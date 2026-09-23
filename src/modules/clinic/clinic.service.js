@@ -145,12 +145,21 @@ export const addDoctor = async (clinicUserId, payload) => {
     };
   }
 
+  // === Standard flow for entirely new Doctor ===
   const hashedPassword = await hashPassword(payload.password);
-  const { specialization, specializationIds, qualification, experience, fee, startTime, dayOfWeek, endTime, ...userFields } = payload;
+  
+  // 🟢 ISSUE 3 FIX: Extract medicalSystem and schedule fields properly
+  const { 
+    specialization, specializationIds, qualification, experience, fee, 
+    startTime, endTime, dayOfWeek, recurrenceType, recurrencePattern, 
+    maxPatients, medicalSystem, 
+    ...userFields 
+  } = payload;
   
   const { user, doctor } = await clinicRepo.createDoctorWithUser({ 
     userData: { ...userFields, password: hashedPassword }, 
-    doctorData: { specialization, specializationIds, qualification, experience, fee, startTime }, 
+    // 🟢 Pass medicalSystem to Doctor table
+    doctorData: { specialization, specializationIds, qualification, experience, fee, startTime, medicalSystem }, 
     clinicId: clinic.id 
   });
   
@@ -163,8 +172,11 @@ export const editDoctor = async (clinicUserId, doctorId, data) => {
   if (!clinic) throw new ApiError(404, "Clinic profile not found");
   
   const doctor = await clinicRepo.findDoctorById(doctorId);
-  if (!doctor || doctor.clinicId !== clinic.id) throw new ApiError(404, "Doctor not found in your clinic");
-  return clinicRepo.updateDoctor(doctorId, data);
+  // 🟢 FIX: Don't block associated doctors from being edited
+  if (!doctor) throw new ApiError(404, "Doctor not found");
+  
+  // Pass clinic.id so the repository knows which clinic is making the edit
+  return clinicRepo.updateDoctor(doctorId, data, clinic.id);
 };
 
 export const removeDoctorFromClinic = async (clinicUserId, doctorId) => {

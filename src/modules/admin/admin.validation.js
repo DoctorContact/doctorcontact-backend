@@ -71,6 +71,7 @@ export const createDoctorSchema = z
     phone: z.string().min(10, "Phone number is required").max(15).optional(),
     password: z.string().min(6, "Password must be at least 6 characters"),
     clinicId: z.string().uuid().optional(),
+    medicalSystem: z.enum(["ALLOPATHY", "HOMEOPATHY", "AYURVEDA"]).optional(), // 🟢 NEW: Medical System
     specialization: z.string().optional(),
     specializationIds: z.array(z.string().uuid()).optional(),
     qualification: z.string().optional(),

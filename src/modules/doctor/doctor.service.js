@@ -471,10 +471,6 @@ export const resumeConsultation = async (user, doctorId, clinicId) => {
   return { status: "NORMAL" };
 };
 
-export const fetchAllDoctors = async () => {
-  return await searchDoctorsAdvanced({});
-};
-
 export const fetchFeaturedDoctors = async () => {
   const doctors = await searchDoctorsAdvancedDB({});
   return doctors
@@ -482,9 +478,17 @@ export const fetchFeaturedDoctors = async () => {
     .sort((a, b) => a.featuredOrder - b.featuredOrder)
     .map(doctor => {
       const status = evaluateDoctorStatus(doctor);
+      
+      // 🟢 FIX: Map associated clinic if primary is missing
+      if (!doctor.clinic && doctor.clinicAssociations && doctor.clinicAssociations.length > 0) {
+        doctor.clinic = doctor.clinicAssociations[0].clinic;
+      }
+      
       delete doctor.schedules;
       delete doctor.leaves;
       delete doctor.appointments;
+      delete doctor.clinicAssociations;
+
       return { ...doctor, liveStatus: status };
     });
 };
@@ -572,7 +576,8 @@ export const getDoctorProfileWithClinics = async (doctorId, locationCity = null)
 
   if (!doctor) throw new ApiError(404, "Doctor not found");
 
-  const primaryClinic = {
+  // 🟢 ISSUE 2 FIX: Only construct primaryClinic if doctor.clinic actually exists
+  const primaryClinic = doctor.clinic ? {
     ...doctor.clinic,
     isPrimary: true,
     associationDetails: {
@@ -580,7 +585,7 @@ export const getDoctorProfileWithClinics = async (doctorId, locationCity = null)
       startTime: doctor.startTime,
       queueMode: doctor.queueMode
     }
-  };
+  } : null;
 
   const associatedClinics = doctor.clinicAssociations.map(assoc => ({
     ...assoc.clinic,
@@ -623,9 +628,12 @@ export const getDoctorProfileWithClinics = async (doctorId, locationCity = null)
     associationDetails: { fee: null },
   }));
 
+  // 🟢 ISSUE 2 FIX: Only include the primaryClinic in the array if it is not null
+  const validPrimary = primaryClinic ? [primaryClinic] : [];
+
   const allClinics = locationCity && doctor.clinic?.city !== locationCity 
     ? [...associatedClinics, ...scheduleOnlyClinics]
-    : [primaryClinic, ...associatedClinics, ...scheduleOnlyClinics];
+    : [...validPrimary, ...associatedClinics, ...scheduleOnlyClinics];
 
   return { ...doctor, allClinics };
 };
@@ -767,9 +775,15 @@ export const searchDoctorsAdvanced = async (filters) => {
   let mappedDoctors = doctors.map(doctor => {
     const status = evaluateDoctorStatus(doctor);
     
+    // 🟢 FIX: Map associated clinic if primary is missing
+    if (!doctor.clinic && doctor.clinicAssociations && doctor.clinicAssociations.length > 0) {
+      doctor.clinic = doctor.clinicAssociations[0].clinic;
+    }
+    
     delete doctor.schedules;
     delete doctor.leaves;
     delete doctor.appointments;
+    delete doctor.clinicAssociations; // clean up
     
     return { ...doctor, liveStatus: status };
   });
