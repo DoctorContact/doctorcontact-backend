@@ -62,7 +62,6 @@ export const sendRequestToDoctor = async (clinicUserId, payload) => {
   const doctor = await findDoctorByIdWithUser(payload.doctorId);
   if (!doctor) throw new ApiError(404, "Doctor not found");
 
-  // 🟢 ISSUE 7 FIX: Allow creating new requests if older ones were REJECTED/CANCELLED
   const activeExisting = await prisma.doctorClinicAssociation.findFirst({
     where: {
       doctorId: doctor.id,
@@ -98,7 +97,7 @@ export const sendRequestToDoctor = async (clinicUserId, payload) => {
       maxPatients: payload.maxPatients || 20,
       recurrenceType: payload.recurrenceType || "DAILY",
       recurrencePattern: payload.recurrencePattern || {},
-      isActive: false // 🟢 Keeps schedule hidden until approved
+      isActive: false // Keeps schedule hidden until approved
     });
   }
 
@@ -119,8 +118,6 @@ export const sendRequestToClinic = async (doctorUserId, payload) => {
   if (!clinic) throw new ApiError(404, "Clinic not found");
   if (!clinic.isApproved) throw new ApiError(400, "This clinic is not yet approved");
 
-  // 🟢 ISSUE 7 FIX: Allow creating new requests if older ones were REJECTED/CANCELLED
-  // Only block if there is already a PENDING or APPROVED request.
   const activeExisting = await prisma.doctorClinicAssociation.findFirst({
     where: {
       doctorId: doctor.id,
@@ -178,16 +175,55 @@ const approveAssociationSafely = async (associationId, doctorId) => {
           data: { status: "APPROVED" } 
         });
 
+        // 🟢 FIX: Smartly segregate Valid Schedules from Ghost Schedules
         const existingInactiveSchedules = await tx.doctorSchedule.findMany({
           where: { doctorId: current.doctorId, clinicId: current.clinicId, isActive: false }
         });
 
         if (existingInactiveSchedules.length > 0) {
-          await tx.doctorSchedule.updateMany({
-            where: { doctorId: current.doctorId, clinicId: current.clinicId, isActive: false },
-            data: { isActive: true }
+          const validScheduleIds = [];
+          const ghostScheduleIds = [];
+
+          existingInactiveSchedules.forEach(schedule => {
+            // If the schedule was created BEFORE this specific request, it's a ghost from a past rejected request.
+            // Using a 1000ms buffer just in case of slight DB write delays.
+            if (schedule.createdAt >= new Date(current.createdAt.getTime() - 1000)) {
+              validScheduleIds.push(schedule.id);
+            } else {
+              ghostScheduleIds.push(schedule.id);
+            }
           });
+
+          // Activate the valid schedules created for this specific request
+          if (validScheduleIds.length > 0) {
+            await tx.doctorSchedule.updateMany({
+              where: { id: { in: validScheduleIds } },
+              data: { isActive: true }
+            });
+          } else {
+            // Fallback: If somehow missing, create a default one
+            await tx.doctorSchedule.create({
+              data: {
+                doctorId: current.doctorId,
+                clinicId: current.clinicId,
+                startTime: current.startTime,
+                endTime: current.endTime,
+                maxPatients: 20, 
+                recurrenceType: "WEEKLY", 
+                recurrencePattern: { days: [current.dayOfWeek] },
+                isActive: true
+              }
+            });
+          }
+
+          // Delete old ghost schedules so they never haunt us again
+          if (ghostScheduleIds.length > 0) {
+            await tx.doctorSchedule.deleteMany({
+              where: { id: { in: ghostScheduleIds } }
+            });
+          }
         } else {
+          // If no schedules were found at all, create the default one
           await tx.doctorSchedule.create({
             data: {
               doctorId: current.doctorId,
@@ -228,7 +264,15 @@ export const respondToClinicRequest = async (doctorUserId, associationId, action
     throw new ApiError(400, `This request has already been ${association.status.toLowerCase()}`);
   }
 
-  if (action === "REJECT") return updateAssociationStatus(associationId, "REJECTED");
+  if (action === "REJECT") {
+    const updated = await updateAssociationStatus(associationId, "REJECTED");
+    // 🟢 Clean up inactive schedules immediately on reject
+    await prisma.doctorSchedule.deleteMany({
+      where: { doctorId: association.doctorId, clinicId: association.clinicId, isActive: false }
+    });
+    return updated;
+  }
+
   return approveAssociationSafely(associationId, association.doctorId);
 };
 
@@ -245,7 +289,15 @@ export const respondToDoctorRequest = async (clinicUserId, associationId, action
     throw new ApiError(400, `This request has already been ${association.status.toLowerCase()}`);
   }
 
-  if (action === "REJECT") return updateAssociationStatus(associationId, "REJECTED");
+  if (action === "REJECT") {
+    const updated = await updateAssociationStatus(associationId, "REJECTED");
+    // 🟢 Clean up inactive schedules immediately on reject
+    await prisma.doctorSchedule.deleteMany({
+      where: { doctorId: association.doctorId, clinicId: association.clinicId, isActive: false }
+    });
+    return updated;
+  }
+
   return approveAssociationSafely(associationId, association.doctorId);
 };
 
@@ -265,7 +317,12 @@ export const cancelAssociation = async (userId, userRole, associationId) => {
     throw new ApiError(400, `This association is already ${association.status.toLowerCase()}`);
   }
 
-  return updateAssociationStatus(associationId, "CANCELLED");
+  const updated = await updateAssociationStatus(associationId, "CANCELLED");
+  // 🟢 Clean up inactive schedules immediately on cancel
+  await prisma.doctorSchedule.deleteMany({
+    where: { doctorId: association.doctorId, clinicId: association.clinicId, isActive: false }
+  });
+  return updated;
 };
 
 export const getMyReceivedRequests = async (userId) => {
