@@ -283,4 +283,41 @@ export const updateDoctorOnlineBookingStatus = async (doctorId, clinicId, isPrim
   }
 };
 
+// 🟢 ISSUE 8 FIX: Safe Doctor Removal Logic
+export const removeDoctorFromClinicRepo = async (doctorId, clinicId) => {
+  return prisma.$transaction(async (tx) => {
+    const doctor = await tx.doctor.findUnique({ where: { id: doctorId } });
+    if (!doctor) throw new Error("Doctor not found");
+
+    // 1. If Native Doctor, sever the primary link but DO NOT delete the doctor profile
+    if (doctor.clinicId === clinicId) {
+      await tx.doctor.update({
+        where: { id: doctorId },
+        data: { clinicId: null } // Doctor safely becomes independent
+      });
+    }
+
+    // 2. Remove the specific clinic association record if it exists
+    const association = await tx.doctorClinicAssociation.findFirst({
+      where: { doctorId, clinicId }
+    });
+    
+    if (association) {
+      await tx.doctorClinicAssociation.delete({
+        where: { id: association.id }
+      });
+    }
+
+    // 3. MOST IMPORTANT: Delete ALL schedules specifically for THIS clinic and THIS doctor
+    await tx.doctorSchedule.deleteMany({
+      where: { 
+        doctorId: doctorId, 
+        clinicId: clinicId 
+      }
+    });
+
+    return true;
+  });
+};
+
 export const updateClinicFeaturedStatus = (id, data) => prisma.clinic.update({ where: { id }, data });

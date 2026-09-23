@@ -9,6 +9,7 @@ import { respondToDoctorRequest as respondToDoctorRequestCore } from "../doctor/
 import { findApprovedAssociationsForDoctor } from "../doctor/doctor.repository.js";
 import { evaluateClinicAvailability } from "./clinic.helper.js";
 import { logAudit } from "../audit/audit.service.js";
+import { emitLiveDoctorsChanged } from "../../sockets/doctor.socket.js";
 
 // 🟢 ISSUE 1 FIX: resolveDayOfWeek helper
 const DAY_OF_WEEK_BY_JS_INDEX = [
@@ -186,24 +187,21 @@ export const removeDoctorFromClinic = async (clinicUserId, doctorId) => {
   const doctor = await prisma.doctor.findUnique({ where: { id: doctorId } });
   if (!doctor) throw new ApiError(404, "Doctor not found");
 
-  if (doctor.clinicId === clinic.id) {
-    throw new ApiError(
-      400, 
-      "This doctor was natively registered under your clinic. You cannot remove the primary association directly. Please mark them inactive or contact Super Admin to migrate the account."
-    );
-  }
-
+  const isNative = doctor.clinicId === clinic.id;
+  
   const association = await prisma.doctorClinicAssociation.findFirst({
     where: { doctorId: doctor.id, clinicId: clinic.id }
   });
 
-  if (!association) {
+  if (!isNative && !association) {
     throw new ApiError(404, "Doctor is not associated with your clinic");
   }
 
-  await prisma.doctorClinicAssociation.delete({
-    where: { id: association.id }
-  });
+  // Execute atomic and safe removal in repository
+  await clinicRepo.removeDoctorFromClinicRepo(doctorId, clinic.id);
+
+  // Emit socket event to clear them from live views
+  emitLiveDoctorsChanged({ reason: "doctor_removed_from_clinic", doctorId, clinicId: clinic.id });
 
   return true;
 };

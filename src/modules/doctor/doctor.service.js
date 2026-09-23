@@ -62,6 +62,7 @@ export const sendRequestToDoctor = async (clinicUserId, payload) => {
   const doctor = await findDoctorByIdWithUser(payload.doctorId);
   if (!doctor) throw new ApiError(404, "Doctor not found");
 
+  // 🟢 ISSUE 7 FIX: Allow creating new requests if older ones were REJECTED/CANCELLED
   const activeExisting = await prisma.doctorClinicAssociation.findFirst({
     where: {
       doctorId: doctor.id,
@@ -97,7 +98,7 @@ export const sendRequestToDoctor = async (clinicUserId, payload) => {
       maxPatients: payload.maxPatients || 20,
       recurrenceType: payload.recurrenceType || "DAILY",
       recurrencePattern: payload.recurrencePattern || {},
-      isActive: false // Keeps schedule hidden until approved
+      isActive: false // 🟢 Keeps schedule hidden until approved
     });
   }
 
@@ -118,6 +119,8 @@ export const sendRequestToClinic = async (doctorUserId, payload) => {
   if (!clinic) throw new ApiError(404, "Clinic not found");
   if (!clinic.isApproved) throw new ApiError(400, "This clinic is not yet approved");
 
+  // 🟢 ISSUE 7 FIX: Allow creating new requests if older ones were REJECTED/CANCELLED
+  // Only block if there is already a PENDING or APPROVED request.
   const activeExisting = await prisma.doctorClinicAssociation.findFirst({
     where: {
       doctorId: doctor.id,
