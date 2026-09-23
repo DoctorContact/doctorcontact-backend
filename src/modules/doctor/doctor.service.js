@@ -62,6 +62,19 @@ export const sendRequestToDoctor = async (clinicUserId, payload) => {
   const doctor = await findDoctorByIdWithUser(payload.doctorId);
   if (!doctor) throw new ApiError(404, "Doctor not found");
 
+  // 🟢 ISSUE 7 FIX: Allow creating new requests if older ones were REJECTED/CANCELLED
+  const activeExisting = await prisma.doctorClinicAssociation.findFirst({
+    where: {
+      doctorId: doctor.id,
+      clinicId: clinic.id,
+      status: { in: ["PENDING", "APPROVED"] }
+    }
+  });
+
+  if (activeExisting) {
+    throw new ApiError(409, `A ${activeExisting.status.toLowerCase()} request or association already exists between this doctor and clinic.`);
+  }
+
   const existingApproved = await findApprovedAssociationsForDoctor(doctor.id);
   const conflict = (payload.startTime && payload.endTime) ? findConflict(payload, existingApproved) : null;
 
@@ -105,6 +118,20 @@ export const sendRequestToClinic = async (doctorUserId, payload) => {
   const clinic = await findClinicById(payload.clinicId);
   if (!clinic) throw new ApiError(404, "Clinic not found");
   if (!clinic.isApproved) throw new ApiError(400, "This clinic is not yet approved");
+
+  // 🟢 ISSUE 7 FIX: Allow creating new requests if older ones were REJECTED/CANCELLED
+  // Only block if there is already a PENDING or APPROVED request.
+  const activeExisting = await prisma.doctorClinicAssociation.findFirst({
+    where: {
+      doctorId: doctor.id,
+      clinicId: clinic.id,
+      status: { in: ["PENDING", "APPROVED"] }
+    }
+  });
+
+  if (activeExisting) {
+    throw new ApiError(409, `You already have a ${activeExisting.status.toLowerCase()} request or association with this clinic.`);
+  }
 
   const existingApproved = await findApprovedAssociationsForDoctor(doctor.id);
   const conflict = findConflict(payload, existingApproved);
@@ -151,7 +178,6 @@ const approveAssociationSafely = async (associationId, doctorId) => {
           data: { status: "APPROVED" } 
         });
 
-        // 🟢 Activate pending schedules, or create one if missing
         const existingInactiveSchedules = await tx.doctorSchedule.findMany({
           where: { doctorId: current.doctorId, clinicId: current.clinicId, isActive: false }
         });
@@ -479,7 +505,6 @@ export const fetchFeaturedDoctors = async () => {
     .map(doctor => {
       const status = evaluateDoctorStatus(doctor);
       
-      // 🟢 FIX: Map associated clinic if primary is missing
       if (!doctor.clinic && doctor.clinicAssociations && doctor.clinicAssociations.length > 0) {
         doctor.clinic = doctor.clinicAssociations[0].clinic;
       }
@@ -576,7 +601,6 @@ export const getDoctorProfileWithClinics = async (doctorId, locationCity = null)
 
   if (!doctor) throw new ApiError(404, "Doctor not found");
 
-  // 🟢 ISSUE 2 FIX: Only construct primaryClinic if doctor.clinic actually exists
   const primaryClinic = doctor.clinic ? {
     ...doctor.clinic,
     isPrimary: true,
@@ -628,7 +652,6 @@ export const getDoctorProfileWithClinics = async (doctorId, locationCity = null)
     associationDetails: { fee: null },
   }));
 
-  // 🟢 ISSUE 2 FIX: Only include the primaryClinic in the array if it is not null
   const validPrimary = primaryClinic ? [primaryClinic] : [];
 
   const allClinics = locationCity && doctor.clinic?.city !== locationCity 
@@ -648,7 +671,6 @@ export const addSchedule = async (user, doctorId, clinicId, payload) => {
     throw new ApiError(409, `This schedule conflicts with an existing session (${conflict.startTime}-${conflict.endTime})`);
   }
 
-  // 🟢 AUTO-ACCEPT FIX: Force schedule to be INACTIVE if request is still PENDING
   const doctor = await prisma.doctor.findUnique({ where: { id: doctorId } });
   const isNative = doctor.clinicId === clinicId;
   const association = await prisma.doctorClinicAssociation.findFirst({
@@ -665,7 +687,7 @@ export const addSchedule = async (user, doctorId, clinicId, payload) => {
     maxPatients: payload.maxPatients,
     recurrenceType: payload.recurrenceType,
     recurrencePattern: payload.recurrencePattern,
-    isActive: isApproved ? payload.isActive : false, // <--- Stops Auto-Accept illusion
+    isActive: isApproved ? payload.isActive : false, 
     onlineBookingEnabled: payload.onlineBookingEnabled ?? true,
   });
   emitLiveDoctorsChanged({ reason: "schedule_added", doctorId, clinicId });
@@ -775,7 +797,6 @@ export const searchDoctorsAdvanced = async (filters) => {
   let mappedDoctors = doctors.map(doctor => {
     const status = evaluateDoctorStatus(doctor);
     
-    // 🟢 FIX: Map associated clinic if primary is missing
     if (!doctor.clinic && doctor.clinicAssociations && doctor.clinicAssociations.length > 0) {
       doctor.clinic = doctor.clinicAssociations[0].clinic;
     }
@@ -783,7 +804,7 @@ export const searchDoctorsAdvanced = async (filters) => {
     delete doctor.schedules;
     delete doctor.leaves;
     delete doctor.appointments;
-    delete doctor.clinicAssociations; // clean up
+    delete doctor.clinicAssociations; 
     
     return { ...doctor, liveStatus: status };
   });
@@ -795,4 +816,4 @@ export const searchDoctorsAdvanced = async (filters) => {
   }
 
   return mappedDoctors;
-}; 
+};

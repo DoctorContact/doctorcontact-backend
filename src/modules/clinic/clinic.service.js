@@ -31,7 +31,6 @@ const resolveDayOfWeek = (payload) => {
     if (!isNaN(parsed.getTime())) return DAY_OF_WEEK_BY_JS_INDEX[parsed.getDay()];
   }
 
-  // Fallback to current day
   return DAY_OF_WEEK_BY_JS_INDEX[new Date().getDay()];
 };
 
@@ -82,8 +81,13 @@ export const addDoctor = async (clinicUserId, payload) => {
     const existingDoctor = await prisma.doctor.findUnique({ where: { userId: existingUser.id } });
     if (!existingDoctor) throw new ApiError(500, "Doctor profile missing for this user.");
 
+    // 🟢 ISSUE 8 FIX: Check only active associations (PENDING or APPROVED)
     const existingAssoc = await prisma.doctorClinicAssociation.findFirst({
-      where: { doctorId: existingDoctor.id, clinicId: clinic.id }
+      where: { 
+        doctorId: existingDoctor.id, 
+        clinicId: clinic.id,
+        status: { in: ["PENDING", "APPROVED"] } 
+      }
     });
 
     if (existingDoctor.clinicId === clinic.id || (existingAssoc && existingAssoc.status === "APPROVED")) {
@@ -97,8 +101,8 @@ export const addDoctor = async (clinicUserId, payload) => {
       };
     }
 
-    if (existingAssoc) {
-      throw new ApiError(409, `Doctor already has a ${existingAssoc.status} request/association with this clinic.`);
+    if (existingAssoc && existingAssoc.status === "PENDING") {
+      throw new ApiError(409, `A PENDING connection request already exists. Please wait for the doctor to respond.`);
     }
 
     if (!payload.startTime || !payload.endTime) {
@@ -148,7 +152,6 @@ export const addDoctor = async (clinicUserId, payload) => {
   // === Standard flow for entirely new Doctor ===
   const hashedPassword = await hashPassword(payload.password);
   
-  // 🟢 ISSUE 3 FIX: Extract medicalSystem and schedule fields properly
   const { 
     specialization, specializationIds, qualification, experience, fee, 
     startTime, endTime, dayOfWeek, recurrenceType, recurrencePattern, 
@@ -158,7 +161,6 @@ export const addDoctor = async (clinicUserId, payload) => {
   
   const { user, doctor } = await clinicRepo.createDoctorWithUser({ 
     userData: { ...userFields, password: hashedPassword }, 
-    // 🟢 Pass medicalSystem to Doctor table
     doctorData: { specialization, specializationIds, qualification, experience, fee, startTime, medicalSystem }, 
     clinicId: clinic.id 
   });
@@ -172,10 +174,8 @@ export const editDoctor = async (clinicUserId, doctorId, data) => {
   if (!clinic) throw new ApiError(404, "Clinic profile not found");
   
   const doctor = await clinicRepo.findDoctorById(doctorId);
-  // 🟢 FIX: Don't block associated doctors from being edited
   if (!doctor) throw new ApiError(404, "Doctor not found");
   
-  // Pass clinic.id so the repository knows which clinic is making the edit
   return clinicRepo.updateDoctor(doctorId, data, clinic.id);
 };
 
@@ -396,7 +396,7 @@ export const fetchClinicProfileById = async (id) => {
       fee: doc.fee, 
       startTime: doc.startTime, 
       queueMode: doc.queueMode,
-      onlineBookingEnabled: doc.onlineBookingEnabled // 🟢 Added this line
+      onlineBookingEnabled: doc.onlineBookingEnabled 
     }
   }));
 
@@ -409,7 +409,7 @@ export const fetchClinicProfileById = async (id) => {
       startTime: assoc.startTime,
       endTime: assoc.endTime,
       queueMode: assoc.queueMode,
-      onlineBookingEnabled: assoc.onlineBookingEnabled // 🟢 Added this line
+      onlineBookingEnabled: assoc.onlineBookingEnabled 
     }
   }));
 
@@ -430,9 +430,6 @@ export const toggleFeaturedStatus = async (clinicId, isFeatured, featuredOrder) 
   });
 };
 
-// ==========================================
-// ISSUE 6: TOGGLE DOCTOR SPECIFIC ONLINE BOOKING
-// ==========================================
 export const toggleDoctorOnlineBookingStatus = async (clinicUserId, doctorId, onlineBookingEnabled) => {
   const clinic = await clinicRepo.findClinicByUserId(clinicUserId);
   if (!clinic) throw new ApiError(404, "Clinic profile not found");
@@ -442,6 +439,5 @@ export const toggleDoctorOnlineBookingStatus = async (clinicUserId, doctorId, on
 
   const isPrimary = doctor.clinicId === clinic.id;
 
-  // 🟢 Call Repository to do the actual DB work
   return clinicRepo.updateDoctorOnlineBookingStatus(doctorId, clinic.id, isPrimary, onlineBookingEnabled);
 };
