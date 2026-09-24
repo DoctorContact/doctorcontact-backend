@@ -45,6 +45,8 @@ import specializationRoutes from "./modules/specialization/specialization.routes
 import auditRoutes from "./modules/audit/audit.routes.js";
 import followupRoutes from "./modules/followup/followup.routes.js";
 
+import ambulanceRoutes from "./modules/ambulance/ambulance.routes.js";
+
 const app = express();
 
 const allowedOrigins = env.CLIENT_URL
@@ -115,6 +117,8 @@ app.use("/api/v1/audit", auditRoutes);
 app.use("/api/v1/followups", followupRoutes);
 
 app.use('/api/v1/specializations', specializationRoutes);
+
+app.use("/api/v1/ambulances", ambulanceRoutes);
 
 if (env.NODE_ENV == "development") {
   app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));

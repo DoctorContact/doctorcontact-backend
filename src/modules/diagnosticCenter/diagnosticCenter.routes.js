@@ -6,11 +6,18 @@ import upload from "../../middlewares/upload.middleware.js";
 
 const router = Router();
 
-// Any authenticated user can browse/search diagnostic centers and view global tests
-router.get("/search", authMiddleware, centerController.searchByName);
-router.get("/all", authMiddleware, centerController.listAllApprovedCenters);
-router.get("/public/:id", centerController.getPublicCenterDetails); // Public lab-details page (no auth required)
-router.get("/global-tests", authMiddleware, centerController.getGlobalTests); // NEW
+// ==========================================
+// 🟢 PUBLIC ROUTES (লগইন ছাড়াই দেখা যাবে)
+// ==========================================
+// এখান থেকে authMiddleware সরিয়ে দেওয়া হয়েছে 
+router.get("/search", centerController.searchByName);
+router.get("/all", centerController.listAllApprovedCenters);
+router.get("/public/:id", centerController.getPublicCenterDetails); 
+router.get("/global-tests", centerController.getGlobalTests); // ফিল্টার করার জন্য এটিও পাবলিক করা হলো
+
+// ==========================================
+// 🔴 PROTECTED ROUTES (লগইন লাগবে)
+// ==========================================
 
 // DIAGNOSTIC_STAFF portal: own profile + parent center
 router.get(

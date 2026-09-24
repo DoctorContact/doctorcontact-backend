@@ -792,3 +792,24 @@ enum MedicalSystem {
   HOMEOPATHY
   AYURVEDA
 }
+
+// ==============================================
+// ISSUE 13: AMBULANCE MANAGEMENT SYSTEM
+// ==============================================
+
+model Ambulance {
+  id              String   @id @default(uuid())
+  type            String   // e.g., Basic, Advanced, Medium
+  hospitalName    String
+  location        String   // 🟢 Storing as simple String for faster queries
+  vehicleNumber   String   @unique
+  mobileNumber    String
+  services        String[] // Array of strings (e.g., ["O2", "Ventilator", "First Aid"])
+  is24x7Available Boolean  @default(false)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([location]) // Index added for faster searching by location
+  @@map("ambulances")
+}
