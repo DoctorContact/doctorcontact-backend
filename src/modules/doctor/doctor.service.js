@@ -877,3 +877,27 @@ export const searchDoctorsAdvanced = async (filters) => {
 
   return mappedDoctors;
 };
+
+// ==============================================
+// PUBLIC LISTINGS (ADDED TO FIX CONTROLLER CRASH)
+// ==============================================
+export const fetchAllDoctors = async () => {
+  const doctors = await searchDoctorsAdvancedDB({});
+
+  let mappedDoctors = doctors.map(doctor => {
+    const status = evaluateDoctorStatus(doctor);
+    
+    if (!doctor.clinic && doctor.clinicAssociations && doctor.clinicAssociations.length > 0) {
+      doctor.clinic = doctor.clinicAssociations[0].clinic;
+    }
+    
+    delete doctor.schedules;
+    delete doctor.leaves;
+    delete doctor.appointments;
+    delete doctor.clinicAssociations; 
+    
+    return { ...doctor, liveStatus: status };
+  });
+
+  return mappedDoctors;
+};
