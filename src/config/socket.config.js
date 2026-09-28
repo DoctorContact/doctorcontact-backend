@@ -12,12 +12,13 @@ export const initSocket = (httpServer, corsOrigin) => {
   });
 
   io.on("connection", (socket) => {
-    logger.info(`🔌 Socket connected: ${socket.id}`);
+    // 🌟 info থেকে debug করা হলো প্রোডাকশন নয়েজ কমানোর জন্য
+    logger.debug(`🔌 Socket connected: ${socket.id}`);
 
     // Client joins a room specific to a doctor's queue to receive live updates
     socket.on("joinQueue", ({ doctorId, clinicId }) => {
       socket.join(`queue:${doctorId}:${clinicId}`);
-      logger.info(`Socket ${socket.id} joined queue:${doctorId}:${clinicId}`);
+      logger.debug(`Socket ${socket.id} joined queue:${doctorId}:${clinicId}`);
     });
 
     socket.on("leaveQueue", ({ doctorId, clinicId }) => {
@@ -26,18 +27,17 @@ export const initSocket = (httpServer, corsOrigin) => {
 
     socket.on("joinAppointment", (appointmentId) => {
       socket.join(`appointment:${appointmentId}`);
-      logger.info(`Socket ${socket.id} joined appointment:${appointmentId}`);
+      logger.debug(`Socket ${socket.id} joined appointment:${appointmentId}`);
     });
 
     socket.on("leaveAppointment", (appointmentId) => {
       socket.leave(`appointment:${appointmentId}`);
     });
 
-    // Personal notification channel — client joins their own room to receive
-    // live pushes for every notifyUser() call anywhere in the app
+    // Personal notification channel
     socket.on("joinUser", (userId) => {
       socket.join(`user:${userId}`);
-      logger.info(`Socket ${socket.id} joined user:${userId}`);
+      logger.debug(`Socket ${socket.id} joined user:${userId}`);
     });
 
     socket.on("leaveUser", (userId) => {
@@ -45,7 +45,7 @@ export const initSocket = (httpServer, corsOrigin) => {
     });
 
     socket.on("disconnect", () => {
-      logger.info(`🔌 Socket disconnected: ${socket.id}`);
+      logger.debug(`🔌 Socket disconnected: ${socket.id}`);
     });
   });
 
