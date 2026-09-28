@@ -1,7 +1,7 @@
 import asyncHandler from "../../utils/asyncHandler.js";
 import ApiResponse from "../../utils/apiResponse.js";
 import * as adminService from "./admin.service.js";
-
+import { getOtpBalance } from "../auth/otp.service.js";
 import {
   updateClinicAdminSchema,
   listUsersQuerySchema,
@@ -450,3 +450,28 @@ export const deactivateClinic = asyncHandler(
     );
   }
 );
+
+// src/modules/admin/admin.controller.js (ba apnar jekhane iccha)
+
+export const checkOtpBalance = async (req, res) => {
+  try {
+    const balanceData = await getOtpBalance();
+    
+    if (balanceData) {
+      return res.status(200).json({ 
+        success: true, 
+        data: balanceData 
+      });
+    } else {
+      return res.status(500).json({ 
+        success: false, 
+        message: "Failed to fetch OTP balance" 
+      });
+    }
+  } catch (error) {
+    return res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
+  }
+};

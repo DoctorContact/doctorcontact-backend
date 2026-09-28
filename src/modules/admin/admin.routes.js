@@ -5,7 +5,7 @@ import roleMiddleware from "../../middlewares/role.middleware.js";
 
 const router = Router();
 
-// এই মিডলওয়্যারটি সব রাউটের জন্য বেসিক অ্যাডমিন অ্যাক্সেস নিশ্চিত করে
+// এই মিডলওয়্যারটি সব রাউটের জন্য বেসিক অ্যাডমিন অ্যাক্সেস নিশ্চিত করে
 router.use(authMiddleware, roleMiddleware("SUPER_ADMIN", "ADMIN"));
 
 /**
@@ -15,6 +15,22 @@ router.use(authMiddleware, roleMiddleware("SUPER_ADMIN", "ADMIN"));
  *     summary: Get platform-wide stats (users, clinics, doctors, patients)
  */
 router.get("/stats", adminController.getStats);
+
+// ==========================================
+// 🟢 OTP BALANCE ROUTE (SUPER ADMIN ONLY)
+// ==========================================
+/**
+ * @swagger
+ * /admin/otp-balance:
+ *   get:
+ *     summary: Get SMS API balance
+ */
+router.get(
+  "/otp-balance", 
+  roleMiddleware("SUPER_ADMIN"), 
+  adminController.checkOtpBalance
+);
+// ==========================================
 
 /**
  * @swagger
@@ -43,7 +59,7 @@ router.patch("/clinics/:clinicId/revoke", adminController.revokeClinicApproval);
 
 // ==========================================
 // 🟢 DOCTOR ROUTES (ORDER FIXED)
-// স্ট্যাটিক রাউটগুলো ডায়নামিক রাউটের উপরে রাখা হয়েছে
+// স্ট্যাটিক রাউটগুলো ডায়নামিক রাউটের উপরে রাখা হয়েছে
 // ==========================================
 
 router.get("/doctors", adminController.listAllDoctors);
