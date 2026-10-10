@@ -96,3 +96,21 @@ export const updateClinicAdminSchema = z.object({
   state: z.string().optional(),
   pincode: z.string().optional(),
 });
+
+export const updateDoctorAdminSchema = z.object({
+  name: z.string().min(2, "Name is required").optional(),
+  specialization: z.string().optional(),
+  qualification: z.string().optional(),
+  experience: z.coerce.number().int().min(0).optional(),
+  fee: z.coerce.number().min(0).optional(),
+  removePhoto: z.string().optional(), 
+});
+
+export const updateClinicDetailsAdminSchema = z.object({
+  clinicName: z.string().min(2, "Clinic name is required").optional(),
+  phone: z.string().optional(),
+  address: z.string().optional(),
+  city: z.string().optional(),
+  state: z.string().optional(),
+  pincode: z.string().optional(),
+});

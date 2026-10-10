@@ -2,6 +2,7 @@ import { Router } from "express";
 import * as adminController from "./admin.controller.js";
 import authMiddleware from "../../middlewares/auth.middleware.js";
 import roleMiddleware from "../../middlewares/role.middleware.js";
+import upload from "../../middlewares/upload.middleware.js";
 
 const router = Router();
 
@@ -114,7 +115,7 @@ router.patch("/settings", roleMiddleware("SUPER_ADMIN"), adminController.updateS
  *   post:
  *     summary: (Admin/Super Admin) Create a new Clinic account
  */
-router.post("/clinics", adminController.createClinic);
+router.post("/clinics", upload.single("logo"), adminController.createClinic);
 
 // Super Admin: global bookings feed across every clinic.
 router.get("/bookings", roleMiddleware("SUPER_ADMIN"), adminController.listBookings);
@@ -150,4 +151,45 @@ router.delete(
   adminController.deactivateClinic
 );
 
+
+/**
+ * @swagger
+ * /admin/doctors/{doctorId}:
+ *   patch:
+ *     summary: Edit doctor details (Super Admin)
+ */
+router.patch(
+  "/doctors/:doctorId/edit",
+  authMiddleware,
+  roleMiddleware("SUPER_ADMIN"),
+  upload.single("photo"),
+  adminController.updateDoctorAdmin
+);
+
+/**
+ * @swagger
+ * /admin/clinics/{clinicId}:
+ *   patch:
+ *     summary: Edit clinic details (Super Admin)
+ */
+router.patch(
+  "/clinics/:clinicId/edit",
+  authMiddleware,
+  roleMiddleware("SUPER_ADMIN"),
+  upload.single("logo"),
+  adminController.updateClinicAdmin
+);
+
+
+/**
+ * @swagger
+ * /admin/requests:
+ *   get:
+ *     summary: List all doctor-clinic association requests (Super Admin)
+ */
+router.get(
+  "/requests", 
+  roleMiddleware("SUPER_ADMIN"), 
+  adminController.listAssociationRequests
+);
 export default router;

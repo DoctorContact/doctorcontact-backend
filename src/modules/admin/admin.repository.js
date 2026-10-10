@@ -553,35 +553,28 @@ export const findFeaturedDoctors = () => {
 // ======================================================
 
 export const updateClinicByAdmin = async (
-  id,
-  { phone, ...clinicData }
+  clinicId,
+  userId,
+  clinicData,
+  userData
 ) => {
-  return prisma.$transaction(
-    async (tx) => {
-      const clinic =
-        await tx.clinic.update({
-          where: { id },
-          data: {
-            ...clinicData,
-            phone,
-          },
-        });
-
-      if (phone) {
-        await tx.user.update({
-          where: {
-            id: clinic.userId,
-          },
-
-          data: {
-            phone,
-          },
-        });
-      }
-
-      return clinic;
+  return prisma.$transaction(async (tx) => {
+    // 1. Update User Table (Name, Phone, Avatar) if provided
+    if (Object.keys(userData).length > 0) {
+      await tx.user.update({
+        where: { id: userId },
+        data: userData,
+      });
     }
-  );
+
+    // 2. Update Clinic Table
+    const updatedClinic = await tx.clinic.update({
+      where: { id: clinicId },
+      data: clinicData,
+    });
+
+    return updatedClinic;
+  });
 };
 
 // ======================================================
@@ -679,6 +672,7 @@ export const softDeleteDoctor = async (
 // ALL ACTIVE DOCTORS
 // ======================================================
 
+
 export const findAllDoctorsAdmin = () => {
   return prisma.doctor.findMany({
     where: {
@@ -686,25 +680,67 @@ export const findAllDoctorsAdmin = () => {
         isActive: true,
       },
     },
-
     include: {
       user: {
         select: {
           name: true,
           email: true,
           phone: true,
+          avatar: true, // 🟢 FIX: Purono doctor der photo anar jonne eta add kora holo
         },
       },
-
       clinic: {
         select: {
           clinicName: true,
+          city: true, // 🟢 FIX: City name anar jonne
         },
       },
     },
-
     orderBy: {
       createdAt: "desc",
     },
+  });
+};
+
+// ======================================================
+// UPDATE DOCTOR (SUPER ADMIN)
+// ======================================================
+export const updateDoctorByAdmin = async (
+  doctorId,
+  userId,
+  doctorData,
+  userData
+) => {
+  return prisma.$transaction(async (tx) => {
+    // 1. Update User Table (Name, Avatar) if provided
+    if (Object.keys(userData).length > 0) {
+      await tx.user.update({
+        where: { id: userId },
+        data: userData,
+      });
+    }
+
+    // 2. Update Doctor Table
+    const updatedDoctor = await tx.doctor.update({
+      where: { id: doctorId },
+      data: doctorData,
+    });
+
+    return updatedDoctor;
+  });
+};
+
+// ======================================================
+// ASSOCIATION REQUESTS (SUPER ADMIN)
+// ======================================================
+export const findAllAssociationRequests = () => {
+  return prisma.doctorClinicAssociation.findMany({
+    include: {
+      doctor: { 
+        include: { user: { select: { name: true, avatar: true, email: true, phone: true } } } 
+      },
+      clinic: { select: { clinicName: true, city: true, logo: true } }
+    },
+    orderBy: { createdAt: "desc" }
   });
 };

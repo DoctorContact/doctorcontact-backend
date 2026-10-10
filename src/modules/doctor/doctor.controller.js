@@ -73,7 +73,8 @@ export const sendRequestToClinic = asyncHandler(async (req, res) => {
 
 export const respondToClinicRequest = asyncHandler(async (req, res) => {
   const { action } = respondToRequestSchema.parse(req.body);
-  const association = await doctorService.respondToClinicRequest(req.user.id, req.params.associationId, action);
+  // 🟢 Passed req.user instead of req.user.id
+  const association = await doctorService.respondToClinicRequest(req.user, req.params.associationId, action);
   res.status(200).json(new ApiResponse(true, `Request ${action === "ACCEPT" ? "approved" : "rejected"}`, { association }));
 });
 

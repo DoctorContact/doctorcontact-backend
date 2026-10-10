@@ -2,6 +2,7 @@ import asyncHandler from "../../utils/asyncHandler.js";
 import ApiResponse from "../../utils/apiResponse.js";
 import * as adminService from "./admin.service.js";
 import { getOtpBalance } from "../auth/otp.service.js";
+import { updateDoctorAdminSchema, updateClinicDetailsAdminSchema } from "./admin.validation.js";
 import {
   updateClinicAdminSchema,
   listUsersQuerySchema,
@@ -14,6 +15,8 @@ import {
   setFeaturedDoctorSchema,
   createDoctorSchema,
 } from "./admin.validation.js";
+
+
 
 export const listClinics = asyncHandler(async (req, res) => {
   const query = listClinicsQuerySchema.parse(req.query);
@@ -475,3 +478,27 @@ export const checkOtpBalance = async (req, res) => {
     });
   }
 };
+
+
+export const updateDoctorAdmin = asyncHandler(async (req, res) => {
+  const data = updateDoctorAdminSchema.parse(req.body);
+  const fileBuffer = req.file ? req.file.buffer : null;
+
+  const doctor = await adminService.editDoctorByAdmin(req.params.doctorId, data, fileBuffer);
+
+  res.status(200).json(new ApiResponse(true, "Doctor updated successfully", { doctor }));
+});
+
+export const updateClinicAdmin = asyncHandler(async (req, res) => {
+  const data = updateClinicDetailsAdminSchema.parse(req.body);
+  const fileBuffer = req.file ? req.file.buffer : null;
+
+  const clinic = await adminService.editClinicByAdmin(req.params.clinicId, data, fileBuffer);
+
+  res.status(200).json(new ApiResponse(true, "Clinic updated successfully", { clinic }));
+});
+
+export const listAssociationRequests = asyncHandler(async (req, res) => {
+  const requests = await adminService.listAllAssociationRequests();
+  res.status(200).json(new ApiResponse(true, "All association requests fetched", { requests }));
+});

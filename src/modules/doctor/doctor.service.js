@@ -33,6 +33,8 @@ import { emitAppointmentNotification } from "../../sockets/notification.socket.j
 import { uploadBufferToCloudinary, deleteFromCloudinary } from "../../utils/cloudinaryUpload.js";
 import { evaluateDoctorStatus } from "./doctor.helper.js";
 import { checkScheduleConflict } from "./schedule.helper.js";
+import { getTodayISTDateString, addDaysToDateString } from "./doctor.helper.js";
+import { getDateContext, scheduleMatchesDate } from "./schedule.helper.js";
 import {
   createDoctorSchedule,
   updateDoctorSchedule,
@@ -254,13 +256,16 @@ const approveAssociationSafely = async (associationId, doctorId) => {
   }
 };
 
-export const respondToClinicRequest = async (doctorUserId, associationId, action) => {
+export const respondToClinicRequest = async (user, associationId, action) => {
   const association = await findAssociationById(associationId);
   if (!association) throw new ApiError(404, "Request not found");
 
-  const doctor = await findDoctorByUserId(doctorUserId);
-  if (!doctor || doctor.id !== association.doctorId) {
-    throw new ApiError(403, "This request does not belong to you");
+  // 🟢 If user is SUPER_ADMIN, bypass the ownership check
+  if (user.role !== "SUPER_ADMIN") {
+    const doctor = await findDoctorByUserId(user.id);
+    if (!doctor || doctor.id !== association.doctorId) {
+      throw new ApiError(403, "This request does not belong to you");
+    }
   }
 
   if (association.status !== "PENDING") {
@@ -269,7 +274,7 @@ export const respondToClinicRequest = async (doctorUserId, associationId, action
 
   if (action === "REJECT") {
     const updated = await updateAssociationStatus(associationId, "REJECTED");
-    // 🟢 Clean up inactive schedules immediately on reject
+    // Clean up inactive schedules immediately on reject
     await prisma.doctorSchedule.deleteMany({
       where: { doctorId: association.doctorId, clinicId: association.clinicId, isActive: false }
     });
@@ -722,20 +727,68 @@ export const getDoctorProfileWithClinics = async (doctorId, locationCity = null)
 };
 
 export const addSchedule = async (user, doctorId, clinicId, payload) => {
-  await assertDoctorClinicManageAccess(user, doctorId, clinicId); 
+  await assertDoctorClinicManageAccess(user, doctorId, clinicId);
 
+  // === 🛑 NEW CONFLICT CHECK LOGIC ===
   const existingSchedules = await findDoctorSchedules(doctorId, clinicId);
-  const conflict = checkScheduleConflict(payload, existingSchedules);
+  const activeSchedules = existingSchedules.filter((s) => s.isActive);
 
-  if (conflict) {
-    throw new ApiError(409, `This schedule conflicts with an existing session (${conflict.startTime}-${conflict.endTime})`);
+  // Helper function: check time overlap
+  const rangesOverlap = (startA, endA, startB, endB) => {
+    const toMins = (t) => {
+      const [h, m] = t.split(":").map(Number);
+      return h * 60 + m;
+    };
+    return toMins(startA) < toMins(endB) && toMins(startB) < toMins(endA);
+  };
+
+  // We check up to 30 days ahead to ensure no conflicts on any specific date/week
+  const todayStr = getTodayISTDateString();
+  let hasConflict = null;
+
+  for (let i = 0; i < 30; i++) {
+    const checkDateStr = addDaysToDateString(todayStr, i);
+    const dateContext = getDateContext(checkDateStr);
+
+    // See if the NEW schedule runs on this date
+    const payloadRunsOnDate = scheduleMatchesDate(
+      {
+        recurrenceType: payload.recurrenceType,
+        recurrencePattern: payload.recurrencePattern,
+      },
+      dateContext
+    );
+
+    if (payloadRunsOnDate) {
+      // Find if any EXISTING schedule runs on this same date and overlaps in time
+      hasConflict = activeSchedules.find((existing) => {
+        const existingRunsOnDate = scheduleMatchesDate(existing, dateContext);
+        if (existingRunsOnDate) {
+          return rangesOverlap(
+            payload.startTime,
+            payload.endTime,
+            existing.startTime,
+            existing.endTime
+          );
+        }
+        return false;
+      });
+
+      if (hasConflict) {
+        throw new ApiError(
+          409,
+          `This schedule conflicts with an existing session (${hasConflict.startTime}-${hasConflict.endTime}) on ${checkDateStr}`
+        );
+      }
+    }
   }
+  // ===================================
 
   const doctor = await prisma.doctor.findUnique({ where: { id: doctorId } });
   const isNative = doctor.clinicId === clinicId;
   const association = await prisma.doctorClinicAssociation.findFirst({
     where: { doctorId, clinicId },
-    orderBy: { createdAt: "desc" }
+    orderBy: { createdAt: "desc" },
   });
   const isApproved = isNative || (association && association.status === "APPROVED");
 
@@ -747,9 +800,10 @@ export const addSchedule = async (user, doctorId, clinicId, payload) => {
     maxPatients: payload.maxPatients,
     recurrenceType: payload.recurrenceType,
     recurrencePattern: payload.recurrencePattern,
-    isActive: isApproved ? payload.isActive : false, 
+    isActive: isApproved ? payload.isActive : false,
     onlineBookingEnabled: payload.onlineBookingEnabled ?? true,
   });
+  
   emitLiveDoctorsChanged({ reason: "schedule_added", doctorId, clinicId });
   return created;
 };

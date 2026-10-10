@@ -72,7 +72,7 @@ router.get(
 router.patch(
   "/requests/:associationId/respond",
   authMiddleware,
-  roleMiddleware("DOCTOR"),
+  roleMiddleware("DOCTOR", "SUPER_ADMIN"), // 🟢 Added SUPER_ADMIN here
   doctorController.respondToClinicRequest
 );
 

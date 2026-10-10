@@ -1,6 +1,7 @@
 import { notifyUser } from "../notification/notification.service.js";
 import ApiError from "../../utils/apiError.js";
 import { hashPassword } from "../auth/auth.helper.js";
+import { uploadBufferToCloudinary, deleteFromCloudinary } from "../../utils/cloudinaryUpload.js";
 
 import {
   findUserByEmail,
@@ -24,13 +25,13 @@ import {
 
   findAllClinics,
   countClinics,
-  updateClinicByAdmin,
+  updateClinicByAdmin, 
   softDeleteClinic,
-  findClinicByIdRaw,
+  findClinicByIdRaw,   
   setClinicApproval,
 
   findAllDoctorsUnverified,
-  findDoctorByIdRaw,
+  findDoctorByIdRaw,   
   setDoctorVerification,
   unverifyDoctorById,
   softDeleteDoctor,
@@ -53,6 +54,9 @@ import {
   setDoctorFeatured,
   findAllDoctorsAdmin,
   findFeaturedDoctors,
+  
+  updateDoctorByAdmin,
+  findAllAssociationRequests
 } from "./admin.repository.js";
 
 // ======================================================
@@ -920,3 +924,79 @@ export const listAllDoctors =
   async () => {
     return findAllDoctorsAdmin();
   };
+
+  // ======================================================
+// SUPER ADMIN DOCTOR EDIT (SERVICE)
+// ======================================================
+
+export const editDoctorByAdmin = async (doctorId, payload, fileBuffer) => {
+  // 🟢 Initialize as undefined so we don't accidentally overwrite existing photos
+  let photoUrl = undefined;
+
+  if (fileBuffer) {
+    const result = await uploadBufferToCloudinary(fileBuffer, "jeet/doctors");
+    photoUrl = result.secure_url;
+  } else if (payload.removePhoto === "true") {
+    photoUrl = null; // 🟢 Set to null ONLY if admin clicked "Remove Photo"
+  }
+
+  const doctorData = {
+    specialization: payload.specialization,
+    qualification: payload.qualification,
+    experience: payload.experience,
+    fee: payload.fee,
+  };
+
+  if (photoUrl !== undefined) doctorData.profilePhoto = photoUrl;
+
+  const userData = {};
+  if (payload.name) userData.name = payload.name;
+  if (photoUrl !== undefined) userData.avatar = photoUrl;
+
+  // Clean undefined values
+  Object.keys(doctorData).forEach(key => doctorData[key] === undefined && delete doctorData[key]);
+
+  const doctor = await findDoctorByIdRaw(doctorId);
+  if (!doctor) throw new ApiError(404, "Doctor not found");
+
+  return updateDoctorByAdmin(doctorId, doctor.userId, doctorData, userData);
+};
+
+// ======================================================
+// SUPER ADMIN CLINIC EDIT (SERVICE)
+// ======================================================
+export const editClinicByAdmin = async (clinicId, payload, fileBuffer) => {
+  const clinic = await findClinicByIdRaw(clinicId);
+  if (!clinic) throw new ApiError(404, "Clinic not found");
+
+  let logoUrl = clinic.logo;
+  
+  if (fileBuffer) {
+    const result = await uploadBufferToCloudinary(fileBuffer, "jeet/clinics");
+    logoUrl = result.secure_url;
+  }
+
+  const clinicData = {
+    clinicName: payload.clinicName,
+    phone: payload.phone,
+    address: payload.address,
+    city: payload.city,
+    state: payload.state,
+    pincode: payload.pincode,
+    logo: logoUrl || undefined,
+  };
+
+  const userData = {};
+  if (payload.clinicName) userData.name = payload.clinicName;
+  if (payload.phone) userData.phone = payload.phone;
+  if (logoUrl) userData.avatar = logoUrl;
+
+  // 🟢 Clean undefined values
+  Object.keys(clinicData).forEach(key => clinicData[key] === undefined && delete clinicData[key]);
+
+  return updateClinicByAdmin(clinicId, clinic.userId, clinicData, userData);
+};
+
+export const listAllAssociationRequests = async () => {
+  return findAllAssociationRequests();
+};
