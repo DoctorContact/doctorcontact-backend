@@ -24,10 +24,7 @@ export const findAllClinics = ({
   page = 1,
   limit = 20,
 }) => {
-  const where =
-    typeof isApproved === "boolean"
-      ? { isApproved }
-      : {};
+  const where = typeof isApproved === "boolean" ? { isApproved } : {};
 
   return prisma.clinic.findMany({
     where,
@@ -50,39 +47,23 @@ export const findAllClinics = ({
 };
 
 export const countClinics = (isApproved) => {
-  const where =
-    typeof isApproved === "boolean"
-      ? { isApproved }
-      : {};
-
-  return prisma.clinic.count({
-    where,
-  });
+  const where = typeof isApproved === "boolean" ? { isApproved } : {};
+  return prisma.clinic.count({ where });
 };
 
 export const findClinicByIdRaw = (id) => {
   return prisma.clinic.findUnique({
     where: { id },
     include: {
-      user: {
-        select: {
-          name: true,
-          email: true,
-        },
-      },
+      user: { select: { name: true, email: true } },
     },
   });
 };
 
-export const setClinicApproval = (
-  id,
-  isApproved
-) => {
+export const setClinicApproval = (id, isApproved) => {
   return prisma.clinic.update({
     where: { id },
-    data: {
-      isApproved,
-    },
+    data: { isApproved },
   });
 };
 
@@ -94,59 +75,31 @@ export const findAllDoctorsUnverified = () => {
   return prisma.doctor.findMany({
     where: {
       isVerified: false,
-      user: {
-        isActive: true,
-      },
+      user: { isActive: true },
     },
     include: {
-      user: {
-        select: {
-          name: true,
-          email: true,
-          phone: true,
-        },
-      },
-      clinic: {
-        select: {
-          clinicName: true,
-        },
-      },
+      user: { select: { name: true, email: true, phone: true } },
+      clinic: { select: { clinicName: true } },
     },
-    orderBy: {
-      createdAt: "desc",
-    },
+    orderBy: { createdAt: "desc" },
   });
 };
 
 export const findDoctorByIdRaw = (id) => {
-  return prisma.doctor.findUnique({
-    where: { id },
-  });
+  return prisma.doctor.findUnique({ where: { id } });
 };
 
-export const setDoctorVerification = (
-  id,
-  isVerified
-) => {
+export const setDoctorVerification = (id, isVerified) => {
   return prisma.doctor.update({
     where: { id },
-    data: {
-      isVerified,
-    },
+    data: { isVerified },
   });
 };
-
-// ======================================================
-// UNVERIFY DOCTOR
-// ======================================================
 
 export const unverifyDoctorById = (id) => {
   return prisma.doctor.update({
     where: { id },
-    data: {
-      isVerified: false,
-      isAvailable: false,
-    },
+    data: { isVerified: false, isAvailable: false },
   });
 };
 
@@ -164,23 +117,10 @@ export const getPlatformStats = async () => {
     totalPatients,
   ] = await Promise.all([
     prisma.user.count(),
-
     prisma.clinic.count(),
-
-    prisma.clinic.count({
-      where: {
-        isApproved: true,
-      },
-    }),
-
+    prisma.clinic.count({ where: { isApproved: true } }),
     prisma.doctor.count(),
-
-    prisma.doctor.count({
-      where: {
-        isVerified: true,
-      },
-    }),
-
+    prisma.doctor.count({ where: { isVerified: true } }),
     prisma.patient.count(),
   ]);
 
@@ -188,14 +128,10 @@ export const getPlatformStats = async () => {
     totalUsers,
     totalClinics,
     approvedClinics,
-    pendingClinics:
-      totalClinics - approvedClinics,
-
+    pendingClinics: totalClinics - approvedClinics,
     totalDoctors,
     verifiedDoctors,
-    unverifiedDoctors:
-      totalDoctors - verifiedDoctors,
-
+    unverifiedDoctors: totalDoctors - verifiedDoctors,
     totalPatients,
   };
 };
@@ -219,15 +155,8 @@ export const createAdminUser = (data) => {
 // CREATE DOCTOR
 // ======================================================
 
-export const createDoctorUser = ({
-  userData,
-  doctorData,
-}) => {
-  const {
-    specializationIds,
-    clinicId,
-    ...rest
-  } = doctorData || {};
+export const createDoctorUser = ({ userData, doctorData }) => {
+  const { specializationIds, clinicId, ...rest } = doctorData || {};
 
   return prisma.$transaction(async (tx) => {
     const user = await tx.user.create({
@@ -245,28 +174,14 @@ export const createDoctorUser = ({
       clinicId: clinicId ?? null,
     };
 
-    if (
-      specializationIds &&
-      specializationIds.length > 0
-    ) {
+    if (specializationIds && specializationIds.length > 0) {
       payload.specializations = {
-        create: specializationIds.map(
-          (id) => ({
-            specializationId: id,
-          })
-        ),
+        create: specializationIds.map((id) => ({ specializationId: id })),
       };
     }
 
-    const doctor =
-      await tx.doctor.create({
-        data: payload,
-      });
-
-    return {
-      user,
-      doctor,
-    };
+    const doctor = await tx.doctor.create({ data: payload });
+    return { user, doctor };
   });
 };
 
@@ -274,277 +189,127 @@ export const createDoctorUser = ({
 // BOOKINGS
 // ======================================================
 
-export const findAllAppointments = async ({
-  clinicId,
-  status,
-  from,
-  to,
-  page = 1,
-  limit = 20,
-}) => {
+export const findAllAppointments = async ({ clinicId, status, from, to, page = 1, limit = 20 }) => {
   const where = {
     ...(clinicId && { clinicId }),
     ...(status && { status }),
-
     ...((from || to) && {
       date: {
-        ...(from && {
-          gte: from,
-        }),
-        ...(to && {
-          lte: to,
-        }),
+        ...(from && { gte: from }),
+        ...(to && { lte: to }),
       },
     }),
   };
 
-  const [items, total] =
-    await Promise.all([
-      prisma.appointment.findMany({
-        where,
+  const [items, total] = await Promise.all([
+    prisma.appointment.findMany({
+      where,
+      include: {
+        patient: { select: { name: true, phone: true, user: { select: { name: true, phone: true } } } },
+        doctor: { select: { user: { select: { name: true } } } },
+        clinic: { select: { clinicName: true, city: true } },
+      },
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+    prisma.appointment.count({ where }),
+  ]);
 
-        include: {
-          patient: {
-            select: {
-              name: true,
-              phone: true,
-
-              user: {
-                select: {
-                  name: true,
-                  phone: true,
-                },
-              },
-            },
-          },
-
-          doctor: {
-            select: {
-              user: {
-                select: {
-                  name: true,
-                },
-              },
-            },
-          },
-
-          clinic: {
-            select: {
-              clinicName: true,
-              city: true,
-            },
-          },
-        },
-
-        orderBy: {
-          createdAt: "desc",
-        },
-
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-
-      prisma.appointment.count({
-        where,
-      }),
-    ]);
-
-  return {
-    items,
-    total,
-    page,
-    limit,
-  };
+  return { items, total, page, limit };
 };
 
 // ======================================================
 // CREATE CLINIC
 // ======================================================
 
-export const createClinicUser = ({
-  userData,
-  clinicName,
-}) => {
-  return prisma.$transaction(
-    async (tx) => {
-      const user =
-        await tx.user.create({
-          data: {
-            ...userData,
-            role: "CLINIC",
-            selfRegistered: false,
-            isVerified: true,
-          },
-        });
+export const createClinicUser = ({ userData, clinicName }) => {
+  return prisma.$transaction(async (tx) => {
+    const user = await tx.user.create({
+      data: {
+        ...userData,
+        role: "CLINIC",
+        selfRegistered: false,
+        isVerified: true,
+      },
+    });
 
-      const clinic =
-        await tx.clinic.create({
-          data: {
-            userId: user.id,
-            clinicName,
-            isApproved: true,
-          },
-        });
+    const clinic = await tx.clinic.create({
+      data: { userId: user.id, clinicName, isApproved: true },
+    });
 
-      return {
-        user,
-        clinic,
-      };
-    }
-  );
+    return { user, clinic };
+  });
 };
 
 // ======================================================
 // DIAGNOSTIC CENTER
 // ======================================================
 
-export const createDiagnosticCenterUser = ({
-  userData,
-  centerName,
-}) => {
-  return prisma.$transaction(
-    async (tx) => {
-      const user =
-        await tx.user.create({
-          data: {
-            ...userData,
-            role: "DIAGNOSTIC_CENTER",
-            selfRegistered: false,
-            isVerified: true,
-          },
-        });
+export const createDiagnosticCenterUser = ({ userData, centerName }) => {
+  return prisma.$transaction(async (tx) => {
+    const user = await tx.user.create({
+      data: {
+        ...userData,
+        role: "DIAGNOSTIC_CENTER",
+        selfRegistered: false,
+        isVerified: true,
+      },
+    });
 
-      const diagnosticCenter =
-        await tx.diagnosticCenter.create({
-          data: {
-            userId: user.id,
-            centerName,
-            isApproved: true,
-          },
-        });
+    const diagnosticCenter = await tx.diagnosticCenter.create({
+      data: { userId: user.id, centerName, isApproved: true },
+    });
 
-      return {
-        user,
-        diagnosticCenter,
-      };
-    }
-  );
-};
-
-export const updateDiagnosticCenterProfile = (
-  id,
-  data
-) => {
-  return prisma.diagnosticCenter.update({
-    where: { id },
-    data,
+    return { user, diagnosticCenter };
   });
 };
 
-export const findAllDiagnosticCenters = ({
-  isApproved,
-  page = 1,
-  limit = 20,
-}) => {
-  const where =
-    typeof isApproved === "boolean"
-      ? { isApproved }
-      : {};
+export const updateDiagnosticCenterProfile = (id, data) => {
+  return prisma.diagnosticCenter.update({ where: { id }, data });
+};
 
+export const findAllDiagnosticCenters = ({ isApproved, page = 1, limit = 20 }) => {
+  const where = typeof isApproved === "boolean" ? { isApproved } : {};
   return prisma.diagnosticCenter.findMany({
     where,
-
-    include: {
-      user: {
-        select: {
-          name: true,
-          email: true,
-          phone: true,
-          isActive: true,
-        },
-      },
-    },
-
+    include: { user: { select: { name: true, email: true, phone: true, isActive: true } } },
     skip: (page - 1) * limit,
     take: limit,
-
-    orderBy: {
-      createdAt: "desc",
-    },
+    orderBy: { createdAt: "desc" },
   });
 };
 
-export const findDiagnosticCenterByIdRaw = (
-  id
-) => {
-  return prisma.diagnosticCenter.findUnique({
-    where: { id },
-  });
+export const findDiagnosticCenterByIdRaw = (id) => {
+  return prisma.diagnosticCenter.findUnique({ where: { id } });
 };
 
-export const setDiagnosticCenterApproval = (
-  id,
-  isApproved
-) => {
-  return prisma.diagnosticCenter.update({
-    where: { id },
-    data: {
-      isApproved,
-    },
-  });
+export const setDiagnosticCenterApproval = (id, isApproved) => {
+  return prisma.diagnosticCenter.update({ where: { id }, data: { isApproved } });
 };
 
 // ======================================================
 // FEATURED DOCTORS
 // ======================================================
 
-export const setDoctorFeatured = (
-  doctorId,
-  isFeatured,
-  featuredOrder
-) => {
+export const setDoctorFeatured = (doctorId, isFeatured, featuredOrder) => {
   return prisma.doctor.update({
-    where: {
-      id: doctorId,
-    },
-
+    where: { id: doctorId },
     data: {
       isFeatured,
-
-      featuredOrder:
-        featuredOrder ??
-        (isFeatured ? 0 : 0),
+      featuredOrder: featuredOrder ?? (isFeatured ? 0 : 0),
     },
   });
 };
 
 export const findFeaturedDoctors = () => {
   return prisma.doctor.findMany({
-    where: {
-      isFeatured: true,
-      user: {
-        isActive: true,
-      },
-    },
-
+    where: { isFeatured: true, user: { isActive: true } },
     include: {
-      user: {
-        select: {
-          name: true,
-        },
-      },
-
-      clinic: {
-        select: {
-          clinicName: true,
-          city: true,
-        },
-      },
+      user: { select: { name: true } },
+      clinic: { select: { clinicName: true, city: true } },
     },
-
-    orderBy: {
-      featuredOrder: "asc",
-    },
+    orderBy: { featuredOrder: "asc" },
   });
 };
 
@@ -552,27 +317,12 @@ export const findFeaturedDoctors = () => {
 // UPDATE CLINIC
 // ======================================================
 
-export const updateClinicByAdmin = async (
-  clinicId,
-  userId,
-  clinicData,
-  userData
-) => {
+export const updateClinicByAdmin = async (clinicId, userId, clinicData, userData) => {
   return prisma.$transaction(async (tx) => {
-    // 1. Update User Table (Name, Phone, Avatar) if provided
     if (Object.keys(userData).length > 0) {
-      await tx.user.update({
-        where: { id: userId },
-        data: userData,
-      });
+      await tx.user.update({ where: { id: userId }, data: userData });
     }
-
-    // 2. Update Clinic Table
-    const updatedClinic = await tx.clinic.update({
-      where: { id: clinicId },
-      data: clinicData,
-    });
-
+    const updatedClinic = await tx.clinic.update({ where: { id: clinicId }, data: clinicData });
     return updatedClinic;
   });
 };
@@ -581,151 +331,72 @@ export const updateClinicByAdmin = async (
 // SOFT DELETE CLINIC
 // ======================================================
 
-export const softDeleteClinic = async (
-  id
-) => {
-  return prisma.$transaction(
-    async (tx) => {
-      const clinic =
-        await tx.clinic.findUnique({
-          where: { id },
-        });
+export const softDeleteClinic = async (id) => {
+  return prisma.$transaction(async (tx) => {
+    const clinic = await tx.clinic.findUnique({ where: { id } });
+    if (!clinic) throw new Error("Clinic not found");
 
-      if (!clinic) {
-        throw new Error(
-          "Clinic not found"
-        );
-      }
+    const updatedClinic = await tx.clinic.update({
+      where: { id },
+      data: { isApproved: false, isAvailableToday: false },
+    });
 
-      const updatedClinic =
-        await tx.clinic.update({
-          where: { id },
+    await tx.user.update({
+      where: { id: clinic.userId },
+      data: { isActive: false },
+    });
 
-          data: {
-            isApproved: false,
-            isAvailableToday: false,
-          },
-        });
-
-      await tx.user.update({
-        where: {
-          id: clinic.userId,
-        },
-
-        data: {
-          isActive: false,
-        },
-      });
-
-      return updatedClinic;
-    }
-  );
+    return updatedClinic;
+  });
 };
 
 // ======================================================
 // SOFT DELETE DOCTOR
 // ======================================================
 
-export const softDeleteDoctor = async (
-  id
-) => {
-  return prisma.$transaction(
-    async (tx) => {
-      const doctor =
-        await tx.doctor.findUnique({
-          where: { id },
-        });
+export const softDeleteDoctor = async (id) => {
+  return prisma.$transaction(async (tx) => {
+    const doctor = await tx.doctor.findUnique({ where: { id } });
+    if (!doctor) throw new Error("Doctor not found");
 
-      if (!doctor) {
-        throw new Error(
-          "Doctor not found"
-        );
-      }
+    const updatedDoctor = await tx.doctor.update({
+      where: { id },
+      data: { isVerified: false, isAvailable: false, isFeatured: false },
+    });
 
-      const updatedDoctor =
-        await tx.doctor.update({
-          where: { id },
+    await tx.user.update({
+      where: { id: doctor.userId },
+      data: { isActive: false },
+    });
 
-          data: {
-            isVerified: false,
-            isAvailable: false,
-            isFeatured: false,
-          },
-        });
-
-      await tx.user.update({
-        where: {
-          id: doctor.userId,
-        },
-
-        data: {
-          isActive: false,
-        },
-      });
-
-      return updatedDoctor;
-    }
-  );
+    return updatedDoctor;
+  });
 };
 
 // ======================================================
 // ALL ACTIVE DOCTORS
 // ======================================================
 
-
 export const findAllDoctorsAdmin = () => {
   return prisma.doctor.findMany({
-    where: {
-      user: {
-        isActive: true,
-      },
-    },
+    where: { user: { isActive: true } },
     include: {
-      user: {
-        select: {
-          name: true,
-          email: true,
-          phone: true,
-          avatar: true, // 🟢 FIX: Purono doctor der photo anar jonne eta add kora holo
-        },
-      },
-      clinic: {
-        select: {
-          clinicName: true,
-          city: true, // 🟢 FIX: City name anar jonne
-        },
-      },
+      user: { select: { name: true, email: true, phone: true, avatar: true } },
+      clinic: { select: { clinicName: true, city: true } },
     },
-    orderBy: {
-      createdAt: "desc",
-    },
+    orderBy: { createdAt: "desc" },
   });
 };
 
 // ======================================================
 // UPDATE DOCTOR (SUPER ADMIN)
 // ======================================================
-export const updateDoctorByAdmin = async (
-  doctorId,
-  userId,
-  doctorData,
-  userData
-) => {
+export const updateDoctorByAdmin = async (doctorId, userId, doctorData, userData) => {
   return prisma.$transaction(async (tx) => {
-    // 1. Update User Table (Name, Avatar) if provided
     if (Object.keys(userData).length > 0) {
-      await tx.user.update({
-        where: { id: userId },
-        data: userData,
-      });
+      await tx.user.update({ where: { id: userId }, data: userData });
     }
-
-    // 2. Update Doctor Table
-    const updatedDoctor = await tx.doctor.update({
-      where: { id: doctorId },
-      data: doctorData,
-    });
-
+    const updatedDoctor = await tx.doctor.update({ where: { id: doctorId }, data: doctorData });
     return updatedDoctor;
   });
 };
@@ -736,11 +407,44 @@ export const updateDoctorByAdmin = async (
 export const findAllAssociationRequests = () => {
   return prisma.doctorClinicAssociation.findMany({
     include: {
-      doctor: { 
-        include: { user: { select: { name: true, avatar: true, email: true, phone: true } } } 
-      },
+      doctor: { include: { user: { select: { name: true, avatar: true, email: true, phone: true } } } },
       clinic: { select: { clinicName: true, city: true, logo: true } }
     },
     orderBy: { createdAt: "desc" }
+  });
+};
+
+// ======================================================
+// DIRECT ASSIGN DOCTOR TO CLINIC (SUPER ADMIN)
+// ======================================================
+export const assignDoctorToClinicDirectly = async (clinicId, payload) => {
+  return prisma.$transaction(async (tx) => {
+    const association = await tx.doctorClinicAssociation.create({
+      data: {
+        doctorId: payload.doctorId,
+        clinicId: clinicId,
+        fee: payload.fee,
+        dayOfWeek: payload.dayOfWeek,
+        startTime: payload.startTime,
+        endTime: payload.endTime,
+        status: "APPROVED",
+        requestedBy: "CLINIC",
+      },
+    });
+
+    const schedule = await tx.doctorSchedule.create({
+      data: {
+        doctorId: payload.doctorId,
+        clinicId: clinicId,
+        startTime: payload.startTime,
+        endTime: payload.endTime,
+        maxPatients: payload.maxPatients,
+        recurrenceType: payload.recurrenceType,
+        recurrencePattern: payload.recurrencePattern || { days: [payload.dayOfWeek] },
+        isActive: true,
+      }
+    });
+
+    return { association, schedule };
   });
 };

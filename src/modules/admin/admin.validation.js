@@ -18,7 +18,7 @@ export const toggleUserStatusSchema = z.object({
 export const listClinicsQuerySchema = z.object({
   isApproved: booleanQueryParam,
   page: z.coerce.number().int().positive().default(1),
-  limit: z.coerce.number().int().positive().max(100).default(20),
+  limit: z.coerce.number().int().positive().max(1000).default(20),
 });
 
 export const updateSettingsSchema = z.object({
@@ -58,7 +58,6 @@ export const createDiagnosticCenterSchema = z.object({
   city: z.string().optional(),
   state: z.string().optional(),
   pincode: z.string().optional(),
-  // 🟢 New fields integrated
   whatsapp: z.string().optional(),
   googleMapsUrl: z.string().url("Must be a valid URL").optional().or(z.literal("")),
   hasHomeService: z.boolean().optional(), 
@@ -71,7 +70,7 @@ export const createDoctorSchema = z
     phone: z.string().min(10, "Phone number is required").max(15).optional(),
     password: z.string().min(6, "Password must be at least 6 characters"),
     clinicId: z.string().uuid().optional(),
-    medicalSystem: z.enum(["ALLOPATHY", "HOMEOPATHY", "AYURVEDA"]).optional(), // 🟢 NEW: Medical System
+    medicalSystem: z.enum(["ALLOPATHY", "HOMEOPATHY", "AYURVEDA"]).optional(),
     specialization: z.string().optional(),
     specializationIds: z.array(z.string().uuid()).optional(),
     qualification: z.string().optional(),
@@ -113,4 +112,16 @@ export const updateClinicDetailsAdminSchema = z.object({
   city: z.string().optional(),
   state: z.string().optional(),
   pincode: z.string().optional(),
+  removeLogo: z.string().optional(), 
+});
+
+export const assignDoctorSchema = z.object({
+  doctorId: z.string().uuid(),
+  fee: z.coerce.number().min(0).optional(),
+  dayOfWeek: z.enum(["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"]).default("MONDAY"),
+  startTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/, "startTime must be HH:mm").default("09:00"),
+  endTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/, "endTime must be HH:mm").default("17:00"),
+  maxPatients: z.number().int().positive().default(20),
+  recurrenceType: z.enum(["DAILY", "WEEKLY", "MONTHLY_DATE", "MONTHLY_WEEKDAY", "SPECIFIC_DATE"]).default("WEEKLY"),
+  recurrencePattern: z.any().optional(),
 });
