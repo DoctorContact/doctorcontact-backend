@@ -19,7 +19,7 @@ router.patch("/clinics/:clinicId/revoke", adminController.revokeClinicApproval);
 router.get("/doctors", adminController.listAllDoctors);
 router.get("/doctors/unverified", adminController.listUnverifiedDoctors);
 router.get("/doctors/featured", adminController.listFeaturedDoctors);
-router.post("/doctors", adminController.createDoctor);
+router.post("/doctors", upload.single("photo"), adminController.createDoctor);
 router.patch("/doctors/:doctorId/verify", adminController.verifyDoctor);
 router.patch("/doctors/:doctorId/unverify", adminController.unverifyDoctor);
 router.patch("/doctors/:doctorId/featured", adminController.setFeaturedDoctor);

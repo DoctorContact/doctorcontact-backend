@@ -342,7 +342,7 @@ export const editDoctorByAdmin = async (doctorId, payload, fileBuffer) => {
     photoUrl = null; 
   }
 
-  const doctorData = { specialization: payload.specialization, qualification: payload.qualification, experience: payload.experience, fee: payload.fee };
+  const doctorData = { specialization: payload.specialization, specializationIds: payload.specializationIds, qualification: payload.qualification, experience: payload.experience, fee: payload.fee };
   if (photoUrl !== undefined) doctorData.profilePhoto = photoUrl;
   
   const userData = {};

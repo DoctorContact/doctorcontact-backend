@@ -155,8 +155,26 @@ export const createAdminUser = (data) => {
 // CREATE DOCTOR
 // ======================================================
 
+// A doctor can have many specializations (e.g. Gynecologist + General Physician).
+// Real data lives in DoctorSpecialization; we also keep the legacy text column
+// `doctor.specialization` filled with a comma-joined label so every existing
+// screen / search that reads it keeps working.
+const uniqueIds = (ids) => [...new Set((ids || []).filter(Boolean))];
+
+const buildSpecializationLabel = async (client, ids) => {
+  if (!ids || ids.length === 0) return null;
+  const rows = await client.specialization.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, name: true },
+  });
+  const nameById = new Map(rows.map((r) => [r.id, r.name]));
+  const label = ids.map((id) => nameById.get(id)).filter(Boolean).join(", ");
+  return label || null;
+};
+
 export const createDoctorUser = ({ userData, doctorData }) => {
   const { specializationIds, clinicId, ...rest } = doctorData || {};
+  const specIds = uniqueIds(specializationIds);
 
   return prisma.$transaction(async (tx) => {
     const user = await tx.user.create({
@@ -174,9 +192,10 @@ export const createDoctorUser = ({ userData, doctorData }) => {
       clinicId: clinicId ?? null,
     };
 
-    if (specializationIds && specializationIds.length > 0) {
+    if (specIds.length > 0) {
+      payload.specialization = await buildSpecializationLabel(tx, specIds);
       payload.specializations = {
-        create: specializationIds.map((id) => ({ specializationId: id })),
+        create: specIds.map((id) => ({ specializationId: id })),
       };
     }
 
@@ -383,6 +402,7 @@ export const findAllDoctorsAdmin = () => {
     include: {
       user: { select: { name: true, email: true, phone: true, avatar: true } },
       clinic: { select: { clinicName: true, city: true } },
+      specializations: { include: { specialization: { select: { id: true, name: true } } } },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -396,7 +416,20 @@ export const updateDoctorByAdmin = async (doctorId, userId, doctorData, userData
     if (Object.keys(userData).length > 0) {
       await tx.user.update({ where: { id: userId }, data: userData });
     }
-    const updatedDoctor = await tx.doctor.update({ where: { id: doctorId }, data: doctorData });
+    const { specializationIds, ...restDoctorData } = doctorData || {};
+    const data = { ...restDoctorData };
+
+    // specializationIds given -> replace the whole set ([] clears them all)
+    if (specializationIds !== undefined) {
+      const specIds = uniqueIds(specializationIds);
+      data.specialization = await buildSpecializationLabel(tx, specIds);
+      data.specializations = {
+        deleteMany: {},
+        create: specIds.map((id) => ({ specializationId: id })),
+      };
+    }
+
+    const updatedDoctor = await tx.doctor.update({ where: { id: doctorId }, data });
     return updatedDoctor;
   });
 };

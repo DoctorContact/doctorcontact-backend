@@ -63,6 +63,23 @@ export const createDiagnosticCenterSchema = z.object({
   hasHomeService: z.boolean().optional(), 
 });
 
+// specializationIds can arrive as a real array (JSON request) OR as a string
+// (multipart/form-data): a JSON string '["id1","id2"]', a comma list, or a single id.
+// An empty string / "[]" means "no specializations".
+const specializationIdsField = z.preprocess((val) => {
+  if (val === undefined || val === null) return undefined;
+  if (Array.isArray(val)) return val;
+  if (typeof val === "string") {
+    const t = val.trim();
+    if (t === "") return [];
+    if (t.startsWith("[")) {
+      try { return JSON.parse(t); } catch { return val; }
+    }
+    return t.split(",").map((x) => x.trim()).filter(Boolean);
+  }
+  return val;
+}, z.array(z.string().uuid()).optional());
+
 export const createDoctorSchema = z
   .object({
     name: z.string().min(2, "Name is required"),
@@ -72,7 +89,7 @@ export const createDoctorSchema = z
     clinicId: z.string().uuid().optional(),
     medicalSystem: z.enum(["ALLOPATHY", "HOMEOPATHY", "AYURVEDA"]).optional(),
     specialization: z.string().optional(),
-    specializationIds: z.array(z.string().uuid()).optional(),
+    specializationIds: specializationIdsField,
     qualification: z.string().optional(),
     experience: z.coerce.number().int().min(0).optional(),
     fee: z.coerce.number().min(0).optional(),
@@ -99,6 +116,7 @@ export const updateClinicAdminSchema = z.object({
 export const updateDoctorAdminSchema = z.object({
   name: z.string().min(2, "Name is required").optional(),
   specialization: z.string().optional(),
+  specializationIds: specializationIdsField,
   qualification: z.string().optional(),
   experience: z.coerce.number().int().min(0).optional(),
   fee: z.coerce.number().min(0).optional(),

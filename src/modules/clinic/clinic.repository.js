@@ -1,5 +1,26 @@
 import prisma from "../../config/db.config.js";
 
+// ======================================================
+// MULTI-SPECIALIZATION HELPERS
+// ======================================================
+// A doctor can have many specializations (e.g. Gynecologist + General Physician).
+// The real data lives in the DoctorSpecialization table. We ALSO keep the old
+// `doctor.specialization` text column filled with a comma-joined label
+// ("Gynecologist, General Physician") so every existing screen / search that
+// still reads that column keeps working without any other change.
+const uniqueIds = (ids) => [...new Set((ids || []).filter(Boolean))];
+
+const buildSpecializationLabel = async (client, ids) => {
+  if (!ids || ids.length === 0) return null;
+  const rows = await client.specialization.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, name: true },
+  });
+  const nameById = new Map(rows.map((r) => [r.id, r.name]));
+  const label = ids.map((id) => nameById.get(id)).filter(Boolean).join(", ");
+  return label || null;
+};
+
 export const findClinicByUserId = (userId) => prisma.clinic.findUnique({ where: { userId } });
 export const findClinicById = (id) => prisma.clinic.findUnique({ where: { id } });
 
@@ -21,19 +42,22 @@ export const updateClinicProfile = async (clinicId, data) => {
 
 export const createDoctorWithUser = ({ userData, doctorData, clinicId }) => {
   const { specializationIds, ...restDoctorData } = doctorData;
+  const specIds = uniqueIds(specializationIds);
 
   return prisma.$transaction(async (tx) => {
     const user = await tx.user.create({ data: { ...userData, role: "DOCTOR", selfRegistered: false } });
-    
+
     const doctorPayload = {
       ...restDoctorData,
       userId: user.id,
       clinicId,
     };
 
-    if (specializationIds && specializationIds.length > 0) {
+    if (specIds.length > 0) {
+      // keep the legacy text column in sync with the selected specializations
+      doctorPayload.specialization = await buildSpecializationLabel(tx, specIds);
       doctorPayload.specializations = {
-        create: specializationIds.map((id) => ({ specializationId: id }))
+        create: specIds.map((id) => ({ specializationId: id })),
       };
     }
 
@@ -144,10 +168,13 @@ export const updateDoctor = async (id, data, clinicId) => {
   }
 
   // 2. ALWAYS update the main profile (Experience, Qualification, Medical System)
-  if (specializationIds) {
+  //    Specializations: replace the whole set. An empty array clears them all.
+  if (specializationIds !== undefined) {
+    const specIds = uniqueIds(specializationIds);
+    updatePayload.specialization = await buildSpecializationLabel(prisma, specIds);
     updatePayload.specializations = {
       deleteMany: {},
-      create: specializationIds.map((specId) => ({ specializationId: specId }))
+      create: specIds.map((specId) => ({ specializationId: specId })),
     };
   }
 
