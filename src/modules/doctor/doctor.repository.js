@@ -298,10 +298,23 @@ export const searchDoctorsAdvancedDB = async ({ query, specializationId, city, m
     };
   }
 
+  // 🟢 City matches the doctor's own clinic OR any approved associated clinic,
+  // so a doctor who sits in several towns shows up in each of them.
+  // (AND is used so it never clashes with the `query` OR above.)
   if (city) {
-    whereClause.clinic = {
-      city: { equals: city, mode: "insensitive" }
-    };
+    const cityMatch = { city: { equals: city, mode: "insensitive" } };
+    whereClause.AND = [
+      {
+        OR: [
+          { clinic: cityMatch },
+          {
+            clinicAssociations: {
+              some: { status: "APPROVED", clinic: cityMatch },
+            },
+          },
+        ],
+      },
+    ];
   }
 
   if (maxFee !== undefined) {

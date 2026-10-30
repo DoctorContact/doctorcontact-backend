@@ -911,6 +911,26 @@ export const searchDoctorsAdvanced = async (filters) => {
   let mappedDoctors = doctors.map(doctor => {
     const status = evaluateDoctorStatus(doctor);
     
+    // 🟢 Collect EVERY clinic the doctor sits at (own clinic + approved
+    // associations), unique by name+city, so the card can show all cities
+    // e.g. Dubrajpur / Pandabeswar / Durgapur
+    const seenClinics = new Set();
+    const allClinics = [];
+    const pushClinic = (clinic, isPrimary) => {
+      if (!clinic) return;
+      const key = `${clinic.clinicName}|${clinic.city}`.toLowerCase();
+      if (seenClinics.has(key)) return;
+      seenClinics.add(key);
+      allClinics.push({
+        clinicName: clinic.clinicName,
+        address: clinic.address,
+        city: clinic.city,
+        isPrimary,
+      });
+    };
+    pushClinic(doctor.clinic, true);
+    (doctor.clinicAssociations || []).forEach((a) => pushClinic(a.clinic, false));
+
     if (!doctor.clinic && doctor.clinicAssociations && doctor.clinicAssociations.length > 0) {
       doctor.clinic = doctor.clinicAssociations[0].clinic;
     }
@@ -920,7 +940,7 @@ export const searchDoctorsAdvanced = async (filters) => {
     delete doctor.appointments;
     delete doctor.clinicAssociations; 
     
-    return { ...doctor, liveStatus: status };
+    return { ...doctor, allClinics, liveStatus: status };
   });
 
   if (filters.liveNow === true) {
