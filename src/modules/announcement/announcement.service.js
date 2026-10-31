@@ -1,4 +1,6 @@
+import { randomUUID } from "crypto";
 import ApiError from "../../utils/apiError.js";
+import prisma from "../../config/db.config.js";
 import {
   createAnnouncement,
   findActiveAnnouncementsForClinic,
@@ -11,6 +13,61 @@ import {
 } from "./announcement.repository.js";
 import { findClinicByUserId, findDoctorById } from "../clinic/clinic.repository.js";
 import { emitGlobalAnnouncement, emitClinicAnnouncement } from "../../sockets/announcement.socket.js";
+import { emitNewNotification } from "../../sockets/notification.socket.js";
+
+const BROADCAST_BATCH_SIZE = 1000;
+
+// 🔔 Saves ONE notification row for EVERY active user (so it shows up in each
+// user's inbox even if they were offline) and also pushes it live over
+// Socket.io to whoever is online right now.
+// Runs in the background — it never blocks or fails the announcement itself.
+const broadcastAnnouncementToAllUsers = async (announcement, creatorUserId) => {
+  let cursor = null;
+
+  while (true) {
+    const users = await prisma.user.findMany({
+      where: {
+        isActive: true,
+        ...(creatorUserId ? { id: { not: creatorUserId } } : {}),
+      },
+      select: { id: true },
+      orderBy: { id: "asc" },
+      take: BROADCAST_BATCH_SIZE,
+      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+    });
+
+    if (users.length === 0) break;
+
+    const createdAt = new Date();
+    const rows = users.map((u) => ({
+      id: randomUUID(), // pre-generated so we can emit the exact same row over the socket
+      userId: u.id,
+      type: "GENERAL",
+      title: announcement.title,
+      message: announcement.message,
+      isRead: false,
+      meta: {
+        kind: "ANNOUNCEMENT",
+        announcementId: announcement.id,
+        announcementType: announcement.type,
+      },
+      createdAt,
+    }));
+
+    await prisma.notification.createMany({ data: rows });
+
+    for (const row of rows) {
+      try {
+        emitNewNotification(row.userId, row);
+      } catch (err) {
+        // a single failed socket emit must not stop the rest
+      }
+    }
+
+    cursor = users[users.length - 1].id;
+    if (users.length < BROADCAST_BATCH_SIZE) break;
+  }
+};
 
 export const publishPlatformAnnouncement = async (
   adminUserId,
@@ -26,6 +83,13 @@ export const publishPlatformAnnouncement = async (
   });
 
   emitGlobalAnnouncement(announcement);
+
+  // 🔔 Send to every active user's notification inbox (background, non-blocking)
+  setImmediate(() => {
+    broadcastAnnouncementToAllUsers(announcement, adminUserId).catch((err) =>
+      console.error("Announcement broadcast to users failed:", err)
+    );
+  });
 
   return announcement;
 };

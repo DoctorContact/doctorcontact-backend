@@ -55,7 +55,7 @@ router.get("/doctors/search", appointmentController.searchDoctors);
 router.post(
   "/book/online",
   authMiddleware,
-  roleMiddleware("PATIENT", "CLINIC", "ADMIN", "SUPER_ADMIN"), 
+  roleMiddleware("PATIENT"), 
   appointmentController.bookOnline
 );
 

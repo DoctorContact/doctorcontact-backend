@@ -40,9 +40,68 @@ import { computeQueueView } from "./appointment.helper.js";
 
 const DAY_NAMES = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
 
+// 🔔 Booking sources for which the clinic + doctor get a "new appointment"
+// notification. Reception / walk-in / phone bookings are made BY the clinic's
+// own staff, so notifying the clinic about its own action would just be noise.
+// Add "RECEPTION", "WALK_IN", "PHONE" here if you want those to notify too.
+const STAFF_NOTIFY_SOURCES = ["ONLINE"];
+
 const getPatientByUserId = (userId) => prisma.patient.findUnique({ where: { userId } });
 
 export const searchForDoctors = async (filters) => searchDoctors(filters);
+
+// 🔔 Tells the clinic account (and the doctor) that a new appointment was booked.
+// Never throws — a failed notification must never affect the booking itself.
+const notifyStaffOfNewBooking = async ({ appointment, doctorId, clinicId, patientId, date, schedule }) => {
+  try {
+    const [clinic, doctor, patient] = await Promise.all([
+      prisma.clinic.findUnique({ where: { id: clinicId }, select: { userId: true } }),
+      prisma.doctor.findUnique({
+        where: { id: doctorId },
+        select: { userId: true, user: { select: { name: true } } },
+      }),
+      prisma.patient.findUnique({ where: { id: patientId }, select: { name: true } }),
+    ]);
+
+    const patientName = patient?.name || "A patient";
+    const doctorName = doctor?.user?.name || "the doctor";
+    const sessionText = schedule?.startTime && schedule?.endTime ? ` (${schedule.startTime} - ${schedule.endTime})` : "";
+
+    const meta = {
+      appointmentId: appointment.id,
+      doctorId,
+      clinicId,
+      patientId,
+      date,
+      token: appointment.token,
+      scheduleId: schedule?.id,
+    };
+
+    // Clinic account
+    if (clinic?.userId) {
+      notifyUser({
+        userId: clinic.userId,
+        type: "APPOINTMENT_BOOKED",
+        title: "New Appointment Booked",
+        message: `${patientName} booked an appointment with Dr. ${doctorName} — Token #${appointment.token} for ${date}${sessionText}.`,
+        meta: { ...meta, audience: "CLINIC" },
+      });
+    }
+
+    // The doctor themself (skipped if the doctor and clinic are the same account)
+    if (doctor?.userId && doctor.userId !== clinic?.userId) {
+      notifyUser({
+        userId: doctor.userId,
+        type: "APPOINTMENT_BOOKED",
+        title: "New Appointment",
+        message: `${patientName} booked an appointment with you — Token #${appointment.token} for ${date}${sessionText}.`,
+        meta: { ...meta, audience: "DOCTOR" },
+      });
+    }
+  } catch (error) {
+    console.error("notifyStaffOfNewBooking failed:", error);
+  }
+};
 
 export const bookOnlineAppointment = async (patientUserId, { doctorId, clinicId, scheduleId, date }) => {
   let patient = await getPatientByUserId(patientUserId);
@@ -119,7 +178,6 @@ export const processWalkInAppointment = async (user, { doctorId, scheduleId, pho
 };
 
 // 🚀 ULTRA-FAST BOOKING CORE 🚀
-// 🚀 ULTRA-FAST BOOKING CORE 🚀
 const bookAppointmentCore = async ({ doctorId, clinicId, scheduleId, patientId, patientUserId, date, bookingSource }) => {
   try {
     // 1. Parallel Fetch (Initial Lookups)
@@ -184,12 +242,18 @@ const bookAppointmentCore = async ({ doctorId, clinicId, scheduleId, patientId, 
 
         emitQueueUpdate(doctorId, clinicId, broadcastPayload);
 
+        // Patient: "Appointment Confirmed"
         if (patientUserId) {
           notifyUser({
             userId: patientUserId, type: "APPOINTMENT_BOOKED", title: "Appointment Confirmed",
             message: `Your appointment is confirmed — Token #${appointment.token} for ${date} (${schedule.startTime} - ${schedule.endTime}).`,
             meta: { appointmentId: appointment.id, doctorId, clinicId, date, token: appointment.token },
           });
+        }
+
+        // 🔔 Clinic + Doctor: "New Appointment Booked"
+        if (STAFF_NOTIFY_SOURCES.includes(bookingSource)) {
+          notifyStaffOfNewBooking({ appointment, doctorId, clinicId, patientId, date, schedule });
         }
       } catch (error) {
         console.error("Post-booking queue update failed:", error);
