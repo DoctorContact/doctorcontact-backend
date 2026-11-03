@@ -29,6 +29,7 @@ model User {
   diagnosticCenter      DiagnosticCenter?
   doctor                Doctor?
   notifications         Notification[]
+  pushTokens            PushToken[]
   patient               Patient?
   receptionist          Receptionist?
 
@@ -93,8 +94,6 @@ model Doctor {
   // Clinic-scoped features (queues, reception booking) only apply once the doctor
   // is associated with a clinic via DoctorClinicAssociation.
   clinicId               String?
-  medicalSystem          MedicalSystem             @default(ALLOPATHY)
-  onlineBookingEnabled   Boolean                   @default(true) 
   specialization         String?
   qualification          String?
   experience             Int?
@@ -252,10 +251,6 @@ model Appointment {
   followups           Followup[]
 
   @@unique([queueId, token])
-  @@index([patientId, status])
-  @@index([queueId, status])
-  @@index([doctorId, clinicId, date])
-  @@index([clinicId, date])
   @@map("appointments")
 }
 
@@ -290,7 +285,6 @@ model DoctorClinicAssociation {
   clinicId    String
   fee         Float?
   queueMode   QueueMode     @default(LIVE)
-  onlineBookingEnabled Boolean @default(true) // 🟢 NEW
   dayOfWeek   DayOfWeek
   startTime   String
   endTime     String
@@ -366,6 +360,20 @@ model Notification {
 
   @@index([userId, isRead])
   @@map("notifications")
+}
+
+model PushToken {
+  id        String   @id @default(uuid())
+  userId    String?
+  token     String   @unique
+  platform  String   @default("android")
+  deviceId  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("push_tokens")
 }
 
 model DoctorLeave {
@@ -785,31 +793,4 @@ enum DoctorOperationalStatus {
   NORMAL
   RUNNING_LATE
   PAUSED
-}
-
-enum MedicalSystem {
-  ALLOPATHY
-  HOMEOPATHY
-  AYURVEDA
-}
-
-// ==============================================
-// ISSUE 13: AMBULANCE MANAGEMENT SYSTEM
-// ==============================================
-
-model Ambulance {
-  id              String   @id @default(uuid())
-  type            String   // e.g., Basic, Advanced, Medium
-  hospitalName    String
-  location        String   // 🟢 Storing as simple String for faster queries
-  vehicleNumber   String   @unique
-  mobileNumber    String
-  services        String[] // Array of strings (e.g., ["O2", "Ventilator", "First Aid"])
-  is24x7Available Boolean  @default(false)
-  isActive        Boolean  @default(true)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  @@index([location]) // Index added for faster searching by location
-  @@map("ambulances")
 }

@@ -14,6 +14,8 @@ import {
 import { findClinicByUserId, findDoctorById } from "../clinic/clinic.repository.js";
 import { emitGlobalAnnouncement, emitClinicAnnouncement } from "../../sockets/announcement.socket.js";
 import { emitNewNotification } from "../../sockets/notification.socket.js";
+import { notifyUser } from "../notification/notification.service.js";
+import { getAllPushTokens, sendExpoPushNotification } from "../../utils/pushNotification.js";
 
 const BROADCAST_BATCH_SIZE = 1000;
 
@@ -84,6 +86,25 @@ export const publishPlatformAnnouncement = async (
 
   emitGlobalAnnouncement(announcement);
 
+  // 🔔 Deliver remote push notification to all registered devices so killed/closed apps receive the alert
+  getAllPushTokens()
+    .then((tokens) => {
+      if (tokens && tokens.length > 0) {
+        return sendExpoPushNotification(tokens, {
+          title: title || "Doctor Contact Announcement",
+          message: message || "",
+          data: {
+            kind: "ANNOUNCEMENT",
+            announcementId: announcement.id,
+            announcementType: type,
+          },
+        });
+      }
+    })
+    .catch((err) => {
+      console.warn("[Push] Error delivering platform announcement push notification:", err.message);
+    });
+
   // 🔔 Send to every active user's notification inbox (background, non-blocking)
   setImmediate(() => {
     broadcastAnnouncementToAllUsers(announcement, adminUserId).catch((err) =>
@@ -115,6 +136,61 @@ export const publishClinicAnnouncement = async (clinicUserId, { type, title, mes
   });
 
   emitClinicAnnouncement(clinic.id, announcement);
+
+  // 🔔 Broadcast clinic announcement to all relevant patients with today's/upcoming appointments & doctor
+  setImmediate(async () => {
+    try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      const appointments = await prisma.appointment.findMany({
+        where: {
+          clinicId: clinic.id,
+          ...(doctorId ? { doctorId } : {}),
+          date: { gte: today },
+          status: { in: ["CONFIRMED", "PENDING"] },
+        },
+        include: {
+          patient: { select: { userId: true } },
+        },
+      });
+
+      const recipientUserIds = new Set();
+      appointments.forEach((apt) => {
+        if (apt.patient?.userId && apt.patient.userId !== clinicUserId) {
+          recipientUserIds.add(apt.patient.userId);
+        }
+      });
+
+      if (doctorId) {
+        const doc = await prisma.doctor.findUnique({
+          where: { id: doctorId },
+          select: { userId: true },
+        });
+        if (doc?.userId && doc.userId !== clinicUserId) {
+          recipientUserIds.add(doc.userId);
+        }
+      }
+
+      for (const recipientId of recipientUserIds) {
+        notifyUser({
+          userId: recipientId,
+          type: "GENERAL",
+          title: `[${clinic.clinicName}] ${title}`,
+          message: message,
+          meta: {
+            kind: "CLINIC_ANNOUNCEMENT",
+            clinicId: clinic.id,
+            doctorId: doctorId || null,
+            announcementId: announcement.id,
+          },
+        }).catch(() => {});
+      }
+    } catch (err) {
+      console.warn("[Announcement] Clinic announcement delivery error:", err.message);
+    }
+  });
+
   return announcement;
 };
 

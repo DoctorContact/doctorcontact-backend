@@ -1,8 +1,31 @@
 import { Router } from "express";
 import * as notificationController from "./notification.controller.js";
-import authMiddleware from "../../middlewares/auth.middleware.js";
+import authMiddleware, { optionalAuth } from "../../middlewares/auth.middleware.js";
 
 const router = Router();
+
+/**
+ * @swagger
+ * /notifications/push-token:
+ *   post:
+ *     summary: Register Expo Push Token for mobile device
+ *     description: Stores the device Expo Push Token to deliver push alerts to the mobile notification bar even when app is closed.
+ *     tags: [Notifications]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [pushToken]
+ *             properties:
+ *               pushToken:
+ *                 type: string
+ *                 example: ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]
+ *     responses:
+ *       200: { description: Push token registered }
+ */
+router.post("/push-token", optionalAuth, notificationController.registerPushToken);
 
 router.use(authMiddleware);
 

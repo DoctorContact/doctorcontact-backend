@@ -26,3 +26,15 @@ export const markAllRead = asyncHandler(async (req, res) => {
   await notificationService.markAllNotificationsRead(req.user.id);
   res.status(200).json(new ApiResponse(true, "All notifications marked as read", null));
 });
+
+export const registerPushToken = asyncHandler(async (req, res) => {
+  const { pushToken, platform, deviceId } = req.body || {};
+  if (!pushToken) {
+    return res.status(400).json(new ApiResponse(false, "pushToken is required", null));
+  }
+  await notificationService.saveUserPushToken(pushToken, req.user?.id || null, {
+    platform: platform || "android",
+    deviceId: deviceId || null,
+  });
+  res.status(200).json(new ApiResponse(true, "Push token registered successfully", null));
+});
