@@ -229,5 +229,5 @@ Contributions, issues, and feature requests are welcome. Feel free to check the 
 This project is licensed under the **ISC License**.
 
 
-// just reminder that you have to check up ar kichu na- auto jabe, 
+// just reminder that you have to check up ar kichu na- auto jabe,   
 // doctor er kono joid induvial hok meni clini clinic nao tahke add kora jabe.-> aprove korta partivcular clinic 
