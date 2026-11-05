@@ -278,6 +278,9 @@ export const checkPushReceipts = async (receiptPairs = []) => {
   }
 };
 
+// In-memory sliding window cache to prevent duplicate remote push dispatches
+const recentDispatches = new Map(); // key -> timestamp
+
 /**
  * Send an Expo Push Notification to one or multiple push tokens.
  * Automatically chunks tokens into batches of 100 as required by the Expo Push API.
@@ -289,6 +292,30 @@ export const sendExpoPushNotification = async (pushTokens, { title, message, dat
   const tokenList = Array.from(new Set(rawList.filter(isValidExpoPushToken)));
 
   if (tokenList.length === 0) return;
+
+  // Deduplicate rapid repeat calls for the same notification or announcement event
+  const dedupKey = data?.notificationId
+    ? `notif_${data.notificationId}`
+    : data?.announcementId
+    ? `ann_${data.announcementId}`
+    : null;
+
+  if (dedupKey) {
+    const now = Date.now();
+    const lastSent = recentDispatches.get(dedupKey);
+    if (lastSent && now - lastSent < 10000) {
+      console.log(`[Push] Deduplicated repeat remote push send for key: ${dedupKey}`);
+      return;
+    }
+    recentDispatches.set(dedupKey, now);
+
+    // Bounded cleanup
+    if (recentDispatches.size > 1000) {
+      for (const [k, time] of recentDispatches.entries()) {
+        if (now - time > 60000) recentDispatches.delete(k);
+      }
+    }
+  }
 
   // Chunk array into max 100 per request
   const chunks = [];

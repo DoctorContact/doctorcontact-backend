@@ -95,8 +95,14 @@ export const publishPlatformAnnouncement = async (
           message: message || "",
           data: {
             kind: "ANNOUNCEMENT",
+            type: "ANNOUNCEMENT",
             announcementId: announcement.id,
             announcementType: type,
+            meta: {
+              kind: "ANNOUNCEMENT",
+              announcementId: announcement.id,
+              announcementType: type,
+            },
           },
         });
       }

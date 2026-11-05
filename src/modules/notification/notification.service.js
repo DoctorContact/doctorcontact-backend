@@ -36,6 +36,8 @@ export const notifyUser = async ({ userId, type, title, message, meta }) => {
             data: {
               notificationId: notification.id,
               type: type || "ALERT",
+              appointmentId: meta?.appointmentId || undefined,
+              announcementId: meta?.announcementId || undefined,
               meta: meta || null,
             },
           });
