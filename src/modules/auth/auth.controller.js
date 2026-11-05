@@ -46,7 +46,7 @@ export const login = asyncHandler(async (req, res) => {
 });
 
 export const refresh = asyncHandler(async (req, res) => {
-  let incomingRefreshToken = req.cookies?.refreshToken || req.body?.refreshToken;
+  let incomingRefreshToken = req.body?.refreshToken || req.cookies?.refreshToken;
   if (!incomingRefreshToken && req.headers.authorization && req.headers.authorization.startsWith("Bearer ")) {
       incomingRefreshToken = req.headers.authorization.split(" ")[1];
   }
