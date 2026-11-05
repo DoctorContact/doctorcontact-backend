@@ -280,20 +280,21 @@ model Announcement {
 }
 
 model DoctorClinicAssociation {
-  id          String        @id @default(uuid())
-  doctorId    String
-  clinicId    String
-  fee         Float?
-  queueMode   QueueMode     @default(LIVE)
-  dayOfWeek   DayOfWeek
-  startTime   String
-  endTime     String
-  status      RequestStatus @default(PENDING)
-  requestedBy RequestedBy
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
-  clinic      Clinic        @relation(fields: [clinicId], references: [id], onDelete: Cascade)
-  doctor      Doctor        @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  id                   String        @id @default(uuid())
+  doctorId             String
+  clinicId             String
+  fee                  Float?
+  queueMode            QueueMode     @default(LIVE)
+  onlineBookingEnabled Boolean       @default(true) 
+  dayOfWeek            DayOfWeek
+  startTime            String
+  endTime              String
+  status               RequestStatus @default(PENDING)
+  requestedBy          RequestedBy
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+  clinic               Clinic        @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  doctor               Doctor        @relation(fields: [doctorId], references: [id], onDelete: Cascade)
 
   @@map("doctor_clinic_associations")
 }
