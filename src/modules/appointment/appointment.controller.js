@@ -43,6 +43,11 @@ export const getAppointmentLiveView = asyncHandler(async (req, res) => {
   res.status(200).json(new ApiResponse(true, "Live queue status fetched", view));
 });
 
+export const getAppointmentDetails = asyncHandler(async (req, res) => {
+  const appointment = await appointmentService.getAppointmentDetails(req.user, req.params.appointmentId);
+  res.status(200).json(new ApiResponse(true, "Appointment details fetched", { appointment }));
+});
+
 export const getClinicAppointments = asyncHandler(async (req, res) => {
   const { doctorId, status, date, patientId, from, to } = req.query;
   const appointments = await appointmentService.getClinicAppointments(req.user, {

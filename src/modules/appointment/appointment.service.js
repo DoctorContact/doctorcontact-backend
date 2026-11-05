@@ -21,6 +21,7 @@ import {
   getConsultationMinutesForDoctorClinic,
   findAppointmentByIdFull,
   findAppointmentForLiveView,
+  findAppointmentByIdWithDetails,
   cancelAppointmentRecord,
   findConflictingAppointmentForPatient,
   getDoctorLeaveForDate,
@@ -46,7 +47,31 @@ const DAY_NAMES = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRID
 // Add "RECEPTION", "WALK_IN", "PHONE" here if you want those to notify too.
 const STAFF_NOTIFY_SOURCES = ["ONLINE"];
 
-const getPatientByUserId = (userId) => prisma.patient.findUnique({ where: { userId } });
+const getPatientByUserId = async (userId) => {
+  let patient = await prisma.patient.findUnique({ where: { userId } });
+  if (!patient) {
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (user?.phone) {
+      const cleanPhone = normalizePhone(user.phone);
+      patient = await prisma.patient.findFirst({
+        where: {
+          OR: [
+            { phone: user.phone },
+            ...(cleanPhone ? [{ phone: cleanPhone }] : []),
+            ...(cleanPhone ? [{ phone: `+91${cleanPhone}` }] : []),
+          ],
+        },
+      });
+      if (patient && !patient.userId) {
+        patient = await prisma.patient.update({
+          where: { id: patient.id },
+          data: { userId },
+        });
+      }
+    }
+  }
+  return patient;
+};
 
 export const searchForDoctors = async (filters) => searchDoctors(filters);
 
@@ -192,11 +217,6 @@ const bookAppointmentCore = async ({ doctorId, clinicId, scheduleId, patientId, 
     if (!doctor.isVerified) throw new ApiError(403, "Doctor is not yet verified");
     if (!schedule || schedule.doctorId !== doctorId || schedule.clinicId !== clinicId) throw new ApiError(404, "Invalid schedule selected");
     if (!schedule.isActive) throw new ApiError(400, "This schedule is currently inactive");
-
-    // FIX: per-session online toggle was saved but never enforced
-    if (bookingSource === "ONLINE" && schedule.onlineBookingEnabled === false) {
-      throw new ApiError(400, "Online booking is turned off for this session. Please book by call or visit the clinic.");
-    }
     
     // 🟢 ISSUE 6 FIX: Enforce Doctor-Clinic specific online booking status
     if (bookingSource === "ONLINE") {
@@ -285,20 +305,28 @@ const bucketAppointment = (appt) => {
 
 export const getMyAppointments = async (patientUserId) => {
   const patient = await getPatientByUserId(patientUserId);
-  if (!patient) throw new ApiError(404, "Patient profile not found");
+  if (!patient) return [];
   const appointments = await findAppointmentsForPatient(patient.id);
 
   return Promise.all(
     appointments.map(async (appt) => {
       const queueMode = await getQueueModeForDoctorClinic(appt.doctorId, appt.clinicId);
       const consultationMinutes = (await getConsultationMinutesForDoctorClinic(appt.doctorId, appt.clinicId)) || DEFAULT_CONSULTATION_MINUTES;
-      const activeTokensAhead = ACTIVE_STATUSES.includes(appt.status) ? await countActiveTokensAhead(appt.queueId, appt.queue.currentToken, appt.token) : 0;
+      const activeTokensAhead = ACTIVE_STATUSES.includes(appt.status) ? await countActiveTokensAhead(appt.queueId, appt.queue?.currentToken, appt.token) : 0;
       
-      const queueView = computeQueueView({ currentToken: appt.queue.currentToken, patientToken: appt.token, activeTokensAhead, consultationMinutes });
+      const queueView = computeQueueView({ currentToken: appt.queue?.currentToken, patientToken: appt.token, activeTokensAhead, consultationMinutes });
       const bucket = bucketAppointment(appt);
 
-      const base = { ...appt, bucket, patientsAhead: queueView.patientsAhead, isYourTurn: queueView.isYourTurn, estimatedWaitMinutes: queueView.estimatedWaitMinutes, estimatedWaitLabel: queueView.estimatedWaitLabel };
-      if (queueMode === "PRIVATE") return { ...base, queue: { status: appt.queue.status }, queueMode: "PRIVATE" };
+      const base = {
+        ...appt,
+        bucket,
+        patientsAhead: queueView.patientsAhead,
+        isYourTurn: queueView.isYourTurn,
+        estimatedWaitMinutes: queueView.estimatedWaitMinutes,
+        estimatedWaitLabel: queueView.estimatedWaitLabel,
+        session: appt.queue?.schedule ? { startTime: appt.queue.schedule.startTime, endTime: appt.queue.schedule.endTime } : null,
+      };
+      if (queueMode === "PRIVATE") return { ...base, queue: { status: appt.queue?.status }, queueMode: "PRIVATE" };
       return { ...base, queueMode: "LIVE" };
     })
   );
@@ -306,7 +334,9 @@ export const getMyAppointments = async (patientUserId) => {
 
 export const getMyBookingStatus = async (patientUserId) => {
   const patient = await getPatientByUserId(patientUserId);
-  if (!patient) throw new ApiError(404, "Patient profile not found");
+  if (!patient) {
+    return { activeAppointments: 0, maxActiveAppointments: MAX_ACTIVE_APPOINTMENTS, canBookMore: true, bookingRestrictedUntil: null };
+  }
 
   const activeCount = await countActiveAppointmentsForPatient(patient.id);
   const restriction = await getPatientRestrictionStatus(patient.id);
@@ -318,19 +348,71 @@ export const getMyBookingStatus = async (patientUserId) => {
 export const getAppointmentLiveView = async (user, appointmentId) => {
   const appt = await findAppointmentForLiveView(appointmentId);
   if (!appt) throw new ApiError(404, "Appointment not found");
-  if (user.role === "PATIENT" && appt.patient.userId !== user.id) throw new ApiError(403, "This appointment does not belong to you");
+  if (user.role === "PATIENT") {
+    const userClean = normalizePhone(user.phone);
+    const patientClean = normalizePhone(appt.patient?.phone);
+    const isOwner =
+      appt.patient?.userId === user.id ||
+      (userClean && patientClean && userClean === patientClean);
+    if (!isOwner) throw new ApiError(403, "This appointment does not belong to you");
+  }
 
   const queueMode = await getQueueModeForDoctorClinic(appt.doctorId, appt.clinicId);
   const consultationMinutes = (await getConsultationMinutesForDoctorClinic(appt.doctorId, appt.clinicId)) || DEFAULT_CONSULTATION_MINUTES;
-  const activeTokensAhead = ACTIVE_STATUSES.includes(appt.status) ? await countActiveTokensAhead(appt.queueId, appt.queue.currentToken, appt.token) : 0;
+  const activeTokensAhead = ACTIVE_STATUSES.includes(appt.status) ? await countActiveTokensAhead(appt.queueId, appt.queue?.currentToken, appt.token) : 0;
 
-  const queueView = computeQueueView({ currentToken: appt.queue.currentToken, patientToken: appt.token, activeTokensAhead, consultationMinutes });
+  const queueView = computeQueueView({ currentToken: appt.queue?.currentToken, patientToken: appt.token, activeTokensAhead, consultationMinutes });
 
   return {
-    appointmentId: appt.id, status: appt.status, token: appt.token, date: appt.date, doctorName: appt.doctor?.user?.name, clinicName: appt.clinic?.clinicName,
+    appointmentId: appt.id,
+    id: appt.id,
+    status: appt.status,
+    token: appt.token,
+    date: appt.date,
+    patientName: appt.patient?.name,
+    patientPhone: appt.patient?.phone,
+    doctorId: appt.doctorId,
+    doctorName: appt.doctor?.user?.name,
+    specialization: appt.doctor?.specialization,
+    qualification: appt.doctor?.qualification,
+    clinicId: appt.clinicId,
+    clinicName: appt.clinic?.clinicName,
+    clinicAddress: appt.clinic?.address || appt.clinic?.city,
     session: appt.queue?.schedule ? { startTime: appt.queue.schedule.startTime, endTime: appt.queue.schedule.endTime } : null,
-    queueMode, queueStatus: appt.queue?.status,
+    queueMode,
+    queueStatus: appt.queue?.status,
     ...(queueMode === "PRIVATE" ? { isYourTurn: queueView.isYourTurn } : { currentToken: queueView.currentToken, yourToken: queueView.yourToken, patientsAhead: queueView.patientsAhead, isYourTurn: queueView.isYourTurn, estimatedWaitMinutes: queueView.estimatedWaitMinutes, estimatedWaitLabel: queueView.estimatedWaitLabel }),
+  };
+};
+
+export const getAppointmentDetails = async (user, appointmentId) => {
+  const appt = await findAppointmentByIdWithDetails(appointmentId);
+  if (!appt) throw new ApiError(404, "Appointment not found");
+
+  if (user.role === "PATIENT") {
+    const userClean = normalizePhone(user.phone);
+    const patientClean = normalizePhone(appt.patient?.phone);
+    const isOwner =
+      appt.patient?.userId === user.id ||
+      (userClean && patientClean && userClean === patientClean);
+    if (!isOwner) throw new ApiError(403, "This appointment does not belong to you");
+  }
+
+  const queueMode = await getQueueModeForDoctorClinic(appt.doctorId, appt.clinicId);
+  const consultationMinutes = (await getConsultationMinutesForDoctorClinic(appt.doctorId, appt.clinicId)) || DEFAULT_CONSULTATION_MINUTES;
+  const activeTokensAhead = ACTIVE_STATUSES.includes(appt.status) ? await countActiveTokensAhead(appt.queueId, appt.queue?.currentToken, appt.token) : 0;
+  const queueView = computeQueueView({ currentToken: appt.queue?.currentToken, patientToken: appt.token, activeTokensAhead, consultationMinutes });
+  const bucket = bucketAppointment(appt);
+
+  return {
+    ...appt,
+    bucket,
+    queueMode,
+    patientsAhead: queueView.patientsAhead,
+    isYourTurn: queueView.isYourTurn,
+    estimatedWaitMinutes: queueView.estimatedWaitMinutes,
+    estimatedWaitLabel: queueView.estimatedWaitLabel,
+    session: appt.queue?.schedule ? { startTime: appt.queue.schedule.startTime, endTime: appt.queue.schedule.endTime } : null,
   };
 };
 

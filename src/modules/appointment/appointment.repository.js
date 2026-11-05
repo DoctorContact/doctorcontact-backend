@@ -156,17 +156,48 @@ export const findAppointmentsForPatient = (patientId) => {
   return prisma.appointment.findMany({
     where: { patientId },
     include: {
-      doctor: { include: { user: { select: { name: true } } } },
-      clinic: { select: { clinicName: true } },
-      queue: true,
+      doctor: {
+        include: {
+          user: { select: { id: true, name: true, phone: true } },
+          specializations: { include: { specialization: true } },
+        },
+      },
+      clinic: { select: { id: true, clinicName: true, address: true, city: true, phone: true, whatsapp: true, googleMapsUrl: true } },
+      patient: { select: { id: true, userId: true, name: true, phone: true, age: true, gender: true } },
+      queue: { include: { schedule: true } },
     },
     orderBy: { createdAt: "desc" },
   });
 };
 
+export const findAppointmentByIdWithDetails = (id) => {
+  return prisma.appointment.findUnique({
+    where: { id },
+    include: {
+      doctor: {
+        include: {
+          user: { select: { id: true, name: true, phone: true, avatar: true } },
+          specializations: { include: { specialization: true } },
+        },
+      },
+      clinic: { select: { id: true, clinicName: true, address: true, city: true, phone: true, whatsapp: true, googleMapsUrl: true } },
+      patient: { select: { id: true, userId: true, name: true, phone: true, age: true, gender: true } },
+      queue: { include: { schedule: true } },
+    },
+  });
+};
+
 export const findAppointmentById = (id) => prisma.appointment.findUnique({ where: { id }, include: { queue: true, doctor: true, patient: { include: { user: true } } } });
 export const findAppointmentByIdFull = (id) => prisma.appointment.findUnique({ where: { id }, include: { patient: true } });
-export const findAppointmentForLiveView = (id) => prisma.appointment.findUnique({ where: { id }, include: { patient: { select: { id: true, userId: true, name: true } }, doctor: { include: { user: { select: { name: true } } } }, clinic: { select: { id: true, clinicName: true } }, queue: { include: { schedule: true } } } });
+export const findAppointmentForLiveView = (id) => prisma.appointment.findUnique({
+  where: { id },
+  include: {
+    patient: { select: { id: true, userId: true, name: true, phone: true } },
+    doctor: { include: { user: { select: { name: true, phone: true } } } },
+    clinic: { select: { id: true, clinicName: true, address: true, city: true, phone: true, whatsapp: true } },
+    queue: { include: { schedule: true } }
+  }
+});
 
 export const getQueueModeForDoctorClinic = async (doctorId, clinicId) => {
   const doctor = await prisma.doctor.findUnique({ where: { id: doctorId } });

@@ -161,6 +161,7 @@ router.get(
  *       200: { description: Live queue status fetched }
  */
 router.get("/:appointmentId/live", authMiddleware, appointmentController.getAppointmentLiveView);
+router.get("/:appointmentId", authMiddleware, appointmentController.getAppointmentDetails);
 
 /**
  * @swagger
