@@ -192,6 +192,11 @@ const bookAppointmentCore = async ({ doctorId, clinicId, scheduleId, patientId, 
     if (!doctor.isVerified) throw new ApiError(403, "Doctor is not yet verified");
     if (!schedule || schedule.doctorId !== doctorId || schedule.clinicId !== clinicId) throw new ApiError(404, "Invalid schedule selected");
     if (!schedule.isActive) throw new ApiError(400, "This schedule is currently inactive");
+
+    // FIX: per-session online toggle was saved but never enforced
+    if (bookingSource === "ONLINE" && schedule.onlineBookingEnabled === false) {
+      throw new ApiError(400, "Online booking is turned off for this session. Please book by call or visit the clinic.");
+    }
     
     // 🟢 ISSUE 6 FIX: Enforce Doctor-Clinic specific online booking status
     if (bookingSource === "ONLINE") {

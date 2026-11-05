@@ -103,7 +103,9 @@ export const findDoctorsByClinic = async (clinicId) => {
     return {
       ...doc,
       // 🟢 FIX: Return the specific clinic's fee so the frontend shows the correct price!
-      fee: assoc.fee !== null && assoc.fee !== undefined ? assoc.fee : doc.fee
+      fee: assoc.fee !== null && assoc.fee !== undefined ? assoc.fee : doc.fee,
+      // FIX: show THIS clinic's online-booking flag, not the doctor's global one
+      onlineBookingEnabled: assoc.onlineBookingEnabled
     };
   });
 
