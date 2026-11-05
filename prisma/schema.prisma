@@ -30,6 +30,7 @@ model User {
   doctor                Doctor?
   notifications         Notification[]
   pushTokens            PushToken[]
+  deviceTokens DeviceToken[]
   patient               Patient?
   receptionist          Receptionist?
 
@@ -54,15 +55,11 @@ model Clinic {
   longitude                 Float?
   logo                      String?
   onlineConsultationEnabled Boolean                   @default(true)
-  
-  // --- Notun add kora feature gulo ---
+
   isFeatured                Boolean                   @default(false)
   featuredOrder             Int                       @default(0)
   isAvailableToday          Boolean                   @default(true)
-  // When ON, a patient with no visit in the last 1 month is auto-scheduled a
-  // follow-up (and notified) by the daily follow-up job.
   autoFollowupEnabled       Boolean                   @default(false)
-  // -----------------------------------
 
   announcements             Announcement[]
   appointments              Appointment[]
@@ -83,17 +80,16 @@ model Clinic {
   followups                 Followup[]
   doctorDailyStatuses       DoctorDailyStatus[]
 
-  @@index([isFeatured, featuredOrder]) // Data fast fetch korar jonno index
+  @@index([isFeatured, featuredOrder])
   @@map("clinics")
 }
 
 model Doctor {
   id                     String                    @id @default(uuid())
   userId                 String                    @unique
-  // Optional: an Admin can onboard a doctor who is not yet attached to any clinic.
-  // Clinic-scoped features (queues, reception booking) only apply once the doctor
-  // is associated with a clinic via DoctorClinicAssociation.
   clinicId               String?
+  medicalSystem          MedicalSystem             @default(ALLOPATHY)
+  onlineBookingEnabled   Boolean                   @default(true)
   specialization         String?
   qualification          String?
   experience             Int?
@@ -107,7 +103,7 @@ model Doctor {
   avgConsultationMinutes Int?
   featuredOrder          Int                       @default(0)
   isFeatured             Boolean                   @default(false)
-  
+
   isAvailable            Boolean                   @default(true)
 
   announcements          Announcement[]
@@ -156,39 +152,28 @@ model ReceptionistDoctor {
 }
 
 model Patient {
-  id          String   @id @default(uuid())
-  userId      String?  @unique
-  name        String
-  phone       String   @unique
-  dob         DateTime?
-  gender      String?
-  bloodGroup  String?
-  // Added by migration 20260719183227_add_appointment_queue_system, but
-  // never declared here — the column has existed in the database this
-  // whole time, just invisible to Prisma Client, which is why reception
-  // "age" input was silently dropped instead of being saved.
-  age         Int?
-  // Added by migration 20260912132039_add_patient_booking_restriction, but
-  // never declared here — every booking call selects/reads this field
-  // (getPatientRestrictionStatus / setPatientBookingRestriction), so without
-  // it in the schema the generated Prisma Client doesn't know the column
-  // exists and EVERY booking (self, reception, walk-in) fails with
-  // "Unknown field `bookingRestrictedUntil`". Run `npx prisma generate`
-  // after pulling this so the client picks it up.
+  id                     String    @id @default(uuid())
+  userId                 String?   @unique
+  name                   String
+  phone                  String    @unique
+  dob                    DateTime?
+  gender                 String?
+  bloodGroup             String?
+  age                    Int?
   bookingRestrictedUntil DateTime?
 
-  user        User?    @relation(fields: [userId], references: [id])
-  appointments Appointment[]
-  reviews              Review[]
-  testRecommendations  TestRecommendation[]
-  testReferrals        TestReferral[]
-  followups            Followup[]
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  user                   User?     @relation(fields: [userId], references: [id])
+  appointments           Appointment[]
+  reviews                Review[]
+  testRecommendations    TestRecommendation[]
+  testReferrals          TestReferral[]
+  followups              Followup[]
+
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
 
   @@index([phone])
-  @@map("patients") // 🟢 FIXED: এটি দিলে Prisma আর টেবিল ডিলিট করবে না
+  @@map("patients")
 }
 
 model Queue {
@@ -201,7 +186,7 @@ model Queue {
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
   clinicId        String
-  scheduleId      String?        // NEW: Link to specific session
+  scheduleId      String?
 
   appointments    Appointment[]
   logs            QueueLog[]
@@ -209,7 +194,6 @@ model Queue {
   doctor          Doctor         @relation(fields: [doctorId], references: [id], onDelete: Cascade)
   schedule        DoctorSchedule? @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
 
-  // CHANGED: Added scheduleId so Morning and Evening sessions have separate queues
   @@unique([doctorId, clinicId, date, scheduleId])
   @@map("queues")
 }
@@ -251,6 +235,10 @@ model Appointment {
   followups           Followup[]
 
   @@unique([queueId, token])
+  @@index([patientId, status])
+  @@index([queueId, status])
+  @@index([doctorId, clinicId, date])
+  @@index([clinicId, date])
   @@map("appointments")
 }
 
@@ -285,7 +273,7 @@ model DoctorClinicAssociation {
   clinicId             String
   fee                  Float?
   queueMode            QueueMode     @default(LIVE)
-  onlineBookingEnabled Boolean       @default(true) 
+  onlineBookingEnabled Boolean       @default(true)
   dayOfWeek            DayOfWeek
   startTime            String
   endTime              String
@@ -413,8 +401,8 @@ model TestRecommendation {
 }
 
 model DiagnosticCenter {
-  id                String                  @id @default(uuid())
-  userId            String                  @unique
+  id                String                         @id @default(uuid())
+  userId            String                         @unique
   centerName        String
   address           String?
   city              String?
@@ -423,21 +411,19 @@ model DiagnosticCenter {
   latitude          Float?
   longitude         Float?
   logo              String?
-  isApproved        Boolean                 @default(false)
-  createdAt         DateTime                @default(now())
-  updatedAt         DateTime                @updatedAt
-  
-  // New fields
+  isApproved        Boolean                        @default(false)
+  createdAt         DateTime                       @default(now())
+  updatedAt         DateTime                       @updatedAt
+
   phone             String?
   whatsapp          String?
   googleMapsUrl     String?
-  hasHomeService    Boolean                 @default(false)
+  hasHomeService    Boolean                        @default(false)
 
-  // Relations
   staff             DiagnosticCenterStaff[]
-  user              User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user              User                           @relation(fields: [userId], references: [id], onDelete: Cascade)
   incomingReferrals TestReferral[]
-  availableTests    CenterTest[]            // <--- This is the missing line
+  availableTests    CenterTest[]
   workingHours      DiagnosticCenterWorkingHours[]
 
   @@map("diagnostic_centers")
@@ -465,17 +451,16 @@ model TestReferral {
   diagnosticCenterId String
   createdByUserId    String
   createdByRole      Role
-  // Diagnostic-side processing workflow (updated by the center or its staff)
   status             TestReferralStatus @default(PENDING)
   resultNotes        String?
   processedByUserId  String?
   completedAt        DateTime?
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
-  appointment        Appointment?     @relation(fields: [appointmentId], references: [id])
-  diagnosticCenter   DiagnosticCenter @relation(fields: [diagnosticCenterId], references: [id], onDelete: Cascade)
-  patient            Patient          @relation(fields: [patientId], references: [id], onDelete: Cascade)
-  referringClinic    Clinic?          @relation(fields: [referringClinicId], references: [id])
+  appointment        Appointment?       @relation(fields: [appointmentId], references: [id])
+  diagnosticCenter   DiagnosticCenter   @relation(fields: [diagnosticCenterId], references: [id], onDelete: Cascade)
+  patient            Patient            @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  referringClinic    Clinic?            @relation(fields: [referringClinicId], references: [id])
 
   @@map("test_referrals")
 }
@@ -577,14 +562,14 @@ enum RecurrenceType {
   WEEKLY
   MONTHLY_DATE
   MONTHLY_WEEKDAY
-  SPECIFIC_DATE   
+  SPECIFIC_DATE
 }
 
 model SearchLocation {
   id        String   @id @default(uuid())
-  nameEn    String   // English Name
-  nameBn    String   // Bengali Name
-  nameHi    String   // Hindi Name
+  nameEn    String
+  nameBn    String
+  nameHi    String
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -616,31 +601,27 @@ model DoctorSpecialization {
 }
 
 model DoctorSchedule {
-  id                    String              @id @default(uuid())
-  doctorId              String
-  clinicId              String
-  startTime             String
-  endTime               String
-  maxPatients           Int
-  recurrenceType        RecurrenceType // DAILY, WEEKLY, MONTHLY_DATE, MONTHLY_WEEKDAY, SPECIFIC_DATE
-  recurrencePattern     Json
-  isActive              Boolean             @default(true)
-  onlineBookingEnabled  Boolean             @default(true) // Clinic can turn off ONLINE booking for just this doctor/session — walk-in/reception still work
-  createdAt             DateTime            @default(now())
-  updatedAt             DateTime            @updatedAt
-  clinic                Clinic              @relation(fields: [clinicId], references: [id], onDelete: Cascade)
-  doctor                Doctor              @relation(fields: [doctorId], references: [id], onDelete: Cascade)
-  queues                Queue[]
-  exceptions            ScheduleException[]
+  id                   String              @id @default(uuid())
+  doctorId             String
+  clinicId             String
+  startTime            String
+  endTime              String
+  maxPatients          Int
+  recurrenceType       RecurrenceType
+  recurrencePattern    Json
+  isActive             Boolean             @default(true)
+  onlineBookingEnabled Boolean             @default(true)
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+  clinic               Clinic              @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  doctor               Doctor              @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  queues               Queue[]
+  exceptions           ScheduleException[]
 
   @@index([doctorId, clinicId])
   @@map("doctor_schedules")
 }
 
-// A one-off override/cancellation for a recurring schedule on a specific
-// date (Step 13). If isCancelled, the schedule simply doesn't run that day.
-// Otherwise, any non-null override* value replaces the schedule's normal
-// value for that date only — the recurring schedule itself is untouched.
 model ScheduleException {
   id                  String         @id @default(uuid())
   scheduleId          String
@@ -658,18 +639,15 @@ model ScheduleException {
   @@map("schedule_exceptions")
 }
 
-// General administrative audit trail (Step 53) — separate from QueueLog,
-// which only covers queue-control actions. Fire-and-forget: a logging
-// failure must never break the action it's describing.
 model AuditLog {
-  id           String   @id @default(uuid())
-  actorUserId  String?
-  actorRole    Role?
-  action       String
-  targetType   String?
-  targetId     String?
-  meta         Json?
-  createdAt    DateTime @default(now())
+  id          String   @id @default(uuid())
+  actorUserId String?
+  actorRole   Role?
+  action      String
+  targetType  String?
+  targetId    String?
+  meta        Json?
+  createdAt   DateTime @default(now())
 
   @@index([targetType, targetId])
   @@index([actorUserId])
@@ -703,9 +681,6 @@ model CenterTest {
   @@map("center_tests")
 }
 
-// Mirrors ClinicWorkingHours — per-day open/close time for a diagnostic
-// center, used to compute the "Available Now / Offline" badge on the
-// public lab-details page (evaluateCenterAvailability helper).
 model DiagnosticCenterWorkingHours {
   id                 String           @id @default(uuid())
   diagnosticCenterId String
@@ -727,19 +702,16 @@ model OtpSession {
   otp       String
   expiresAt DateTime
   createdAt DateTime @default(now())
-  
+
   @@map("otp_sessions")
 }
 
-// Follow-up: a doctor/clinic/receptionist schedules a future check-in date
-// for a patient. On that date the patient gets a notification, and the
-// clinic can see everyone they've scheduled a follow-up for.
 model Followup {
   id              String         @id @default(uuid())
   patientId       String
   doctorId        String
   clinicId        String
-  appointmentId   String? // the visit this follow-up was scheduled from, if any
+  appointmentId   String?
   followUpDate    DateTime       @db.Date
   notes           String?
   status          FollowupStatus @default(SCHEDULED)
@@ -771,10 +743,6 @@ enum TestReferralStatus {
   CANCELLED
 }
 
-// Persistent per-day operational status for a doctor at a clinic (Step 40) —
-// separate from the one-shot delay notification, so Live Doctor cards can
-// show "Running Late" as actual state, not just something that was announced
-// once and then forgotten.
 model DoctorDailyStatus {
   id           String                  @id @default(uuid())
   doctorId     String
@@ -796,4 +764,45 @@ enum DoctorOperationalStatus {
   PAUSED
 }
 
-// Forced update for EC2
+enum MedicalSystem {
+  ALLOPATHY
+  HOMEOPATHY
+  AYURVEDA
+}
+
+enum DevicePlatform {
+  WEB
+  ANDROID
+  IOS
+}
+
+model Ambulance {
+  id              String   @id @default(uuid())
+  type            String
+  hospitalName    String
+  location        String
+  vehicleNumber   String   @unique
+  mobileNumber    String
+  services        String[]
+  is24x7Available Boolean  @default(false)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([location])
+  @@map("ambulances")
+}
+
+model DeviceToken {
+  id        String         @id @default(uuid())
+  userId    String
+  token     String         @unique
+  platform  DevicePlatform @default(WEB)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("device_tokens")
+}
