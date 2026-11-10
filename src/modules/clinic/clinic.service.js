@@ -439,3 +439,8 @@ export const toggleDoctorOnlineBookingStatus = async (clinicUserId, doctorId, on
 
   return clinicRepo.updateDoctorOnlineBookingStatus(doctorId, clinic.id, isPrimary, onlineBookingEnabled);
 };
+export const toggleOnlinePharmacy = async (clinicUserId, enabled) => {
+  const clinic = await clinicRepo.findClinicByUserId(clinicUserId);
+  if (!clinic) throw new ApiError(404, "Clinic profile not found");
+  return clinicRepo.setOnlinePharmacyEnabled(clinic.id, enabled);
+};

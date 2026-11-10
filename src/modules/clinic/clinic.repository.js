@@ -216,6 +216,7 @@ export const searchClinicsAdvancedDB = async ({ query, city, specializationId })
       googleMapsUrl: true,
       latitude: true,
       longitude: true,
+      onlinePharmacyEnabled: true,
       isFeatured: true,
       _count: { select: { doctors: true } },
     },
@@ -350,3 +351,5 @@ export const removeDoctorFromClinicRepo = async (doctorId, clinicId) => {
 };
 
 export const updateClinicFeaturedStatus = (id, data) => prisma.clinic.update({ where: { id }, data });
+export const setOnlinePharmacyEnabled = (clinicId, enabled) =>
+  prisma.clinic.update({ where: { id: clinicId }, data: { onlinePharmacyEnabled: enabled } });

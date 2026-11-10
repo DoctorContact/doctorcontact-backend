@@ -55,6 +55,7 @@ model Clinic {
   longitude                 Float?
   logo                      String?
   onlineConsultationEnabled Boolean                   @default(true)
+  onlinePharmacyEnabled     Boolean                   @default(false)
 
   isFeatured                Boolean                   @default(false)
   featuredOrder             Int                       @default(0)

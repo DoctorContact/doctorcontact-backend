@@ -257,6 +257,8 @@ router.patch("/online-consultation", clinicController.toggleOnlineConsultation);
  */
 router.patch("/auto-followup", clinicController.toggleAutoFollowup);
 
+router.patch("/online-pharmacy", clinicController.toggleOnlinePharmacy);
+
 /**
  * @swagger
  * /clinic/requests/received:

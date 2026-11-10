@@ -224,3 +224,9 @@ export const toggleDoctorOnlineBooking = asyncHandler(async (req, res) => {
 
   res.status(200).json(new ApiResponse(true, `Online booking ${onlineBookingEnabled ? 'enabled' : 'disabled'} for this doctor`, result));
 });
+export const toggleOnlinePharmacy = asyncHandler(async (req, res) => {
+  const { enabled } = toggleOnlineConsultationSchema.parse(req.body);
+  const clinic = await clinicService.toggleOnlinePharmacy(req.user.id, enabled);
+  const message = enabled ? "Online pharmacy enabled" : "Online pharmacy disabled";
+  res.status(200).json(new ApiResponse(true, message, { clinic }));
+});
