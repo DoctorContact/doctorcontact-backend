@@ -6,7 +6,6 @@ export const updateCenterProfileSchema = z.object({
   city: z.string().optional(),
   state: z.string().optional(),
   pincode: z.string().optional(),
-  // === NEW: Step 25 Location & Contact Fields ===
   phone: z.string().optional(),
   whatsapp: z.string().optional(),
   googleMapsUrl: z.string().url("Must be a valid URL").optional().or(z.literal("")),
@@ -15,27 +14,15 @@ export const updateCenterProfileSchema = z.object({
   hasHomeService: z.boolean().optional(),
 });
 
-const dayOfWeekEnum = z.enum([
-  "MONDAY",
-  "TUESDAY",
-  "WEDNESDAY",
-  "THURSDAY",
-  "FRIDAY",
-  "SATURDAY",
-  "SUNDAY",
-]);
+const dayOfWeekEnum = z.enum(["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY"]);
 
 export const updateWorkingHoursSchema = z.object({
-  hours: z
-    .array(
-      z.object({
-        dayOfWeek: dayOfWeekEnum,
-        openTime: z.string().optional(), // "HH:mm"
-        closeTime: z.string().optional(),
-        isClosed: z.boolean().default(false),
-      })
-    )
-    .min(1, "At least one day's schedule is required"),
+  hours: z.array(z.object({
+    dayOfWeek: dayOfWeekEnum,
+    openTime: z.string().optional(),
+    closeTime: z.string().optional(),
+    isClosed: z.boolean().default(false),
+  })).min(1, "At least one day's schedule is required"),
 });
 
 export const createStaffSchema = z.object({
@@ -50,7 +37,24 @@ export const changeStaffPasswordSchema = z.object({
   newPassword: z.string().min(6, "Password must be at least 6 characters"),
 });
 
-// === NEW: Step 26 Diagnostic Tests Validation ===
+// =====================================
+// 🔴 NEW: Admin Global Tests Validation
+// =====================================
+export const addGlobalTestSchema = z.object({
+  name: z.string().min(2, "Test name is required"),
+  description: z.string().optional(),
+  isActive: z.boolean().default(true),
+});
+
+export const updateGlobalTestSchema = z.object({
+  name: z.string().min(2).optional(),
+  description: z.string().optional(),
+  isActive: z.boolean().optional(),
+});
+
+// =====================================
+// 🔴 NEW: Diagnostic Center Tests Validation
+// =====================================
 export const addCenterTestSchema = z.object({
   testId: z.string().uuid("Invalid Test ID"),
   price: z.number().nonnegative("Price cannot be negative").optional(),

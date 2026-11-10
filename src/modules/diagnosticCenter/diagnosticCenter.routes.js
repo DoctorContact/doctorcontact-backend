@@ -7,26 +7,28 @@ import upload from "../../middlewares/upload.middleware.js";
 const router = Router();
 
 // ==========================================
-// 🟢 PUBLIC ROUTES (লগইন ছাড়াই দেখা যাবে)
+// 🟢 PUBLIC ROUTES (লগইন ছাড়াই দেখা যাবে)
 // ==========================================
-// এখান থেকে authMiddleware সরিয়ে দেওয়া হয়েছে 
 router.get("/search", centerController.searchByName);
 router.get("/all", centerController.listAllApprovedCenters);
 router.get("/public/:id", centerController.getPublicCenterDetails); 
-router.get("/global-tests", centerController.getGlobalTests); // ফিল্টার করার জন্য এটিও পাবলিক করা হলো
+router.get("/global-tests", centerController.getGlobalTests); 
 
 // ==========================================
-// 🔴 PROTECTED ROUTES (লগইন লাগবে)
+// 🔴 ADMIN & SUPER_ADMIN ROUTES (Global Tests)
 // ==========================================
+router.post("/admin/global-tests", authMiddleware, roleMiddleware("ADMIN", "SUPER_ADMIN"), centerController.addGlobalTest);
+router.patch("/admin/global-tests/:id", authMiddleware, roleMiddleware("ADMIN", "SUPER_ADMIN"), centerController.updateGlobalTest);
+router.delete("/admin/global-tests/:id", authMiddleware, roleMiddleware("ADMIN", "SUPER_ADMIN"), centerController.deleteGlobalTest);
 
-// DIAGNOSTIC_STAFF portal: own profile + parent center
-router.get(
-  "/staff/me",
-  authMiddleware,
-  roleMiddleware("DIAGNOSTIC_STAFF"),
-  centerController.getMyStaffProfile
-);
+// ==========================================
+// 🔴 DIAGNOSTIC STAFF PORTAL
+// ==========================================
+router.get("/staff/me", authMiddleware, roleMiddleware("DIAGNOSTIC_STAFF"), centerController.getMyStaffProfile);
 
+// ==========================================
+// 🔴 DIAGNOSTIC CENTER ROUTES
+// ==========================================
 router.use(authMiddleware, roleMiddleware("DIAGNOSTIC_CENTER"));
 
 router.get("/profile", centerController.getMyProfile);
@@ -38,13 +40,13 @@ router.patch("/staff/change-password", centerController.changeStaffPassword);
 
 router.post("/logo", upload.single("photo"), centerController.uploadLogo);
 
-// === NEW: Step 26 Diagnostic Tests Routes ===
+// === Diagnostic Tests Routes (For Centers) ===
 router.get("/tests", centerController.getMyTests);
 router.post("/tests", centerController.addCenterTest);
 router.patch("/tests/:testId", centerController.updateCenterTest);
 router.delete("/tests/:testId", centerController.removeCenterTest);
 
-// === NEW: Working Hours Routes ===
+// === Working Hours Routes ===
 router.get("/working-hours", centerController.getWorkingHours);
 router.patch("/working-hours", centerController.updateWorkingHours);
 router.put("/working-hours", centerController.updateWorkingHours);

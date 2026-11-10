@@ -2,8 +2,11 @@ import asyncHandler from "../../utils/asyncHandler.js";
 import ApiResponse from "../../utils/apiResponse.js";
 import ApiError from "../../utils/apiError.js";
 import * as centerService from "./diagnosticCenter.service.js";
-import { updateCenterProfileSchema, createStaffSchema, changeStaffPasswordSchema, addCenterTestSchema, 
-  updateCenterTestSchema, updateWorkingHoursSchema } from "./diagnosticCenter.validation.js";
+import { 
+  updateCenterProfileSchema, createStaffSchema, changeStaffPasswordSchema, 
+  addCenterTestSchema, updateCenterTestSchema, updateWorkingHoursSchema,
+  addGlobalTestSchema, updateGlobalTestSchema
+} from "./diagnosticCenter.validation.js";
 
 export const getMyProfile = asyncHandler(async (req, res) => {
   const center = await centerService.getMyProfile(req.user.id);
@@ -62,11 +65,34 @@ export const getPublicCenterDetails = asyncHandler(async (req, res) => {
   res.status(200).json(new ApiResponse(true, "Diagnostic center details fetched", data));
 });
 
+// ====================================================
+// 🔴 Admin Global Tests API
+// ====================================================
 export const getGlobalTests = asyncHandler(async (req, res) => {
   const tests = await centerService.listActiveGlobalTests();
   res.status(200).json(new ApiResponse(true, "Global diagnostic tests fetched", { tests }));
 });
 
+export const addGlobalTest = asyncHandler(async (req, res) => {
+  const data = addGlobalTestSchema.parse(req.body);
+  const test = await centerService.addGlobalTest(data);
+  res.status(201).json(new ApiResponse(true, "Global test created successfully", { test }));
+});
+
+export const updateGlobalTest = asyncHandler(async (req, res) => {
+  const data = updateGlobalTestSchema.parse(req.body);
+  const test = await centerService.updateGlobalTestConfig(req.params.id, data);
+  res.status(200).json(new ApiResponse(true, "Global test updated", { test }));
+});
+
+export const deleteGlobalTest = asyncHandler(async (req, res) => {
+  await centerService.removeGlobalTest(req.params.id);
+  res.status(200).json(new ApiResponse(true, "Global test deleted"));
+});
+
+// ====================================================
+// 🔴 Center Own Tests API
+// ====================================================
 export const getMyTests = asyncHandler(async (req, res) => {
   const tests = await centerService.listMyTests(req.user.id);
   res.status(200).json(new ApiResponse(true, "Center tests fetched", { tests }));
@@ -89,7 +115,7 @@ export const removeCenterTest = asyncHandler(async (req, res) => {
   res.status(200).json(new ApiResponse(true, "Test removed from center"));
 });
 
-// === NEW: Working Hours ===
+// === Working Hours ===
 export const getWorkingHours = asyncHandler(async (req, res) => {
   const hours = await centerService.getMyWorkingHours(req.user.id);
   res.status(200).json(new ApiResponse(true, "Working hours fetched", { hours }));

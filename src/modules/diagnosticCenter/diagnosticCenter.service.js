@@ -3,28 +3,13 @@ import { hashPassword } from "../auth/auth.helper.js";
 import { findUserByEmail, updateUserPassword } from "../auth/auth.repository.js";
 import { uploadBufferToCloudinary, deleteFromCloudinary } from "../../utils/cloudinaryUpload.js";
 import {
-  findCenterByUserId,
-  findCenterById,
-  updateCenterProfile,
-  updateCenterLogo,
-  createStaffWithUser,
-  findStaffByCenter,
-  findStaffByUserId,
-  findStaffById,
-  searchCentersByName,
-  searchAllApprovedCenters,
-  findApprovedCenterWithTests,
-  getActiveGlobalTests,
-  getCenterTests,
-  findCenterTestById,
-  findCenterTestByCenterAndTest,
-  addTestToCenter,
-  updateCenterTest,
-  removeCenterTest,
-  findWorkingHoursByCenterId,
-  upsertWorkingHours,
+  findCenterByUserId, findCenterById, updateCenterProfile, updateCenterLogo,
+  createStaffWithUser, findStaffByCenter, findStaffByUserId, searchCentersByName,
+  searchAllApprovedCenters, findApprovedCenterWithTests, getActiveGlobalTests,
+  getCenterTests, findCenterTestById, addTestToCenter, updateCenterTest, removeCenterTest,
+  findWorkingHoursByCenterId, upsertWorkingHours,
+  createGlobalTest, updateGlobalTest, deleteGlobalTest
 } from "./diagnosticCenter.repository.js";
-
 
 export const getMyProfile = async (userId) => {
   const center = await findCenterByUserId(userId);
@@ -32,7 +17,6 @@ export const getMyProfile = async (userId) => {
   return center;
 };
 
-// DIAGNOSTIC_STAFF: their own profile + the center they belong to.
 export const getStaffProfile = async (userId) => {
   const staff = await findStaffByUserId(userId);
   if (!staff) throw new ApiError(404, "Staff profile not found");
@@ -48,13 +32,12 @@ export const updateMyProfile = async (userId, data) => {
 export const addStaff = async (centerUserId, payload) => {
   const center = await findCenterByUserId(centerUserId);
   if (!center) throw new ApiError(404, "Diagnostic center profile not found");
-  if (!center.isApproved) throw new ApiError(403, "Your diagnostic center is not yet approved by admin");
+  if (!center.isApproved) throw new ApiError(403, "Your center is not approved");
 
   const existing = await findUserByEmail(payload.email);
-  if (existing) throw new ApiError(409, "A user with this email already exists");
+  if (existing) throw new ApiError(409, "User with this email already exists");
 
   const hashedPassword = await hashPassword(payload.password);
-
   const { user, staff } = await createStaffWithUser({
     userData: { ...payload, password: hashedPassword },
     diagnosticCenterId: center.id,
@@ -78,7 +61,6 @@ export const changeStaffPassword = async (centerUserId, { userId, newPassword })
   if (!staff || staff.diagnosticCenterId !== center.id) {
     throw new ApiError(404, "Staff member not found at your diagnostic center");
   }
-
   const hashedPassword = await hashPassword(newPassword);
   await updateUserPassword(userId, hashedPassword);
 };
@@ -89,33 +71,29 @@ export const uploadLogo = async (centerUserId, fileBuffer) => {
 
   const result = await uploadBufferToCloudinary(fileBuffer, "jeet/diagnostic-centers");
   const updated = await updateCenterLogo(center.id, result.secure_url);
-
-  if (center.logo) {
-    await deleteFromCloudinary(center.logo);
-  }
-
+  if (center.logo) await deleteFromCloudinary(center.logo);
   return updated;
 };
 
-export const searchByName = async (name) => {
-  return searchCentersByName(name);
-};
-
-export const listAllApprovedCenters = async () => {
-  return searchAllApprovedCenters();
-};
-
-// Public lab-details page: center info + its tests, only if approved.
+export const searchByName = async (name) => searchCentersByName(name);
+export const listAllApprovedCenters = async () => searchAllApprovedCenters();
 export const getPublicCenterDetails = async (centerId) => {
   const result = await findApprovedCenterWithTests(centerId);
   if (!result) throw new ApiError(404, "Diagnostic center not found");
   return result;
 };
 
-export const listActiveGlobalTests = async () => {
-  return getActiveGlobalTests();
-};
+// =======================================
+// 🔴 NEW: Admin Global Tests Logic
+// =======================================
+export const listActiveGlobalTests = async () => getActiveGlobalTests();
+export const addGlobalTest = async (payload) => createGlobalTest(payload);
+export const updateGlobalTestConfig = async (id, payload) => updateGlobalTest(id, payload);
+export const removeGlobalTest = async (id) => deleteGlobalTest(id);
 
+// =======================================
+// 🔴 Center Own Tests Logic
+// =======================================
 export const listMyTests = async (userId) => {
   const center = await findCenterByUserId(userId);
   if (!center) throw new ApiError(404, "Diagnostic center profile not found");
@@ -126,11 +104,7 @@ export const addCenterTest = async (userId, payload) => {
   const center = await findCenterByUserId(userId);
   if (!center) throw new ApiError(404, "Diagnostic center profile not found");
 
-  const existingMapping = await findCenterTestByCenterAndTest(center.id, payload.testId);
-  if (existingMapping) {
-    throw new ApiError(409, "This test is already added to your center. Please update it instead.");
-  }
-
+  // 🟢 আগে থেকে টেস্ট আছে কিনা সেই চেকিং ডিলিট করা হয়েছে (একই টেস্ট মাল্টিপল প্রাইজ সাপোর্ট করার জন্য)
   return addTestToCenter({
     diagnosticCenterId: center.id,
     testId: payload.testId,
@@ -147,7 +121,6 @@ export const updateCenterTestConfig = async (userId, centerTestId, payload) => {
   if (!centerTest || centerTest.diagnosticCenterId !== center.id) {
     throw new ApiError(404, "Test configuration not found in your center");
   }
-
   return updateCenterTest(centerTestId, payload);
 };
 
@@ -159,12 +132,11 @@ export const removeCenterTestConfig = async (userId, centerTestId) => {
   if (!centerTest || centerTest.diagnosticCenterId !== center.id) {
     throw new ApiError(404, "Test configuration not found in your center");
   }
-
   await removeCenterTest(centerTestId);
   return { deleted: true };
 };
 
-// === NEW: Working Hours ===
+// === Working Hours ===
 export const getMyWorkingHours = async (userId) => {
   const center = await findCenterByUserId(userId);
   if (!center) throw new ApiError(404, "Diagnostic center profile not found");

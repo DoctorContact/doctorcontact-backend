@@ -677,7 +677,6 @@ model CenterTest {
   diagnosticCenter   DiagnosticCenter @relation(fields: [diagnosticCenterId], references: [id], onDelete: Cascade)
   test               DiagnosticTest   @relation(fields: [testId], references: [id], onDelete: Cascade)
 
-  @@unique([diagnosticCenterId, testId])
   @@map("center_tests")
 }
 
