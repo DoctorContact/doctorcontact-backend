@@ -49,7 +49,6 @@ export const saveWebPushSubscription = async (userId, subscription) => {
       NOT: { token },
     },
   });
-
   return true;
 };
 
@@ -66,7 +65,7 @@ const sendToRow = async (row, payload) => {
     subscription = JSON.parse(row.token);
   } catch {
     await prisma.pushToken.deleteMany({ where: { id: row.id } }).catch(() => {});
-    return { ok: false, statusCode: 0, message: "Saved subscription was unreadable and was removed" };
+    return;
   }
 
   try {
@@ -75,44 +74,28 @@ const sendToRow = async (row, payload) => {
       TTL: 3600,
       urgency: "high",
     });
-    return { ok: true };
   } catch (err) {
-    const statusCode = err?.statusCode || 0;
-    if (statusCode === 404 || statusCode === 410) {
+    if (err?.statusCode === 404 || err?.statusCode === 410) {
       await prisma.pushToken.deleteMany({ where: { id: row.id } }).catch(() => {});
     } else {
-      console.warn("[WebPush] send failed:", statusCode || err?.message);
+      console.warn("[WebPush] send failed:", err?.statusCode || err?.message);
     }
-    return {
-      ok: false,
-      statusCode,
-      message: String(err?.body || err?.message || "Unknown error").slice(0, 200),
-    };
   }
 };
 
 export const sendWebPushToUser = async (userId, { title, body, url, tag }) => {
-  const summary = { configured: false, devices: 0, sent: 0, failed: [] };
-  if (!userId || !getVapidDetails()) return summary;
-  summary.configured = true;
+  if (!userId || !getVapidDetails()) return;
   try {
     const rows = await prisma.pushToken.findMany({
       where: { userId, platform: "web" },
       select: { id: true, token: true },
     });
-    summary.devices = rows.length;
-    if (rows.length === 0) return summary;
+    if (rows.length === 0) return;
     const payload = JSON.stringify({ title, body, url: url || "/", tag });
-    const results = await Promise.all(rows.map((row) => sendToRow(row, payload)));
-    for (const result of results) {
-      if (result.ok) summary.sent += 1;
-      else summary.failed.push({ statusCode: result.statusCode, message: result.message });
-    }
+    await Promise.allSettled(rows.map((row) => sendToRow(row, payload)));
   } catch (err) {
     console.warn("[WebPush] sendWebPushToUser error:", err.message);
-    summary.failed.push({ statusCode: 0, message: err.message });
   }
-  return summary;
 };
 
 export const sendWebPushToAll = async ({ title, body, url, tag }, { excludeUserId } = {}) => {
@@ -122,10 +105,7 @@ export const sendWebPushToAll = async ({ title, body, url, tag }, { excludeUserI
     let cursor = null;
     while (true) {
       const rows = await prisma.pushToken.findMany({
-        where: {
-          platform: "web",
-          ...(excludeUserId ? { userId: { not: excludeUserId } } : {}),
-        },
+        where: { platform: "web", ...(excludeUserId ? { userId: { not: excludeUserId } } : {}) },
         select: { id: true, token: true },
         orderBy: { id: "asc" },
         take: 200,
