@@ -59,3 +59,9 @@ export const unsubscribeWebPush = asyncHandler(async (req, res) => {
   await notificationService.unsubscribeWebPush(req.user.id, req.body?.endpoint);
   res.status(200).json(new ApiResponse(true, "Browser notifications disabled", null));
 });
+
+
+export const testWebPush = asyncHandler(async (req, res) => {
+  const summary = await notificationService.testWebPush(req.user.id);
+  res.status(200).json(new ApiResponse(true, "Test notification processed", summary));
+});

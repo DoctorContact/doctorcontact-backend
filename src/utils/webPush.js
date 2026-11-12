@@ -14,7 +14,7 @@ const getVapidDetails = () => {
     return null;
   }
   vapidDetails = {
-    subject: process.env.VAPID_SUBJECT || "mailto:doctorcontact620@gmail.com",
+    subject: process.env.VAPID_SUBJECT || "mailto:support@doctorcontact.in",
     publicKey,
     privateKey,
   };
@@ -66,7 +66,7 @@ const sendToRow = async (row, payload) => {
     subscription = JSON.parse(row.token);
   } catch {
     await prisma.pushToken.deleteMany({ where: { id: row.id } }).catch(() => {});
-    return;
+    return { ok: false, statusCode: 0, message: "Saved subscription was unreadable and was removed" };
   }
 
   try {
@@ -75,28 +75,44 @@ const sendToRow = async (row, payload) => {
       TTL: 3600,
       urgency: "high",
     });
+    return { ok: true };
   } catch (err) {
-    if (err?.statusCode === 404 || err?.statusCode === 410) {
+    const statusCode = err?.statusCode || 0;
+    if (statusCode === 404 || statusCode === 410) {
       await prisma.pushToken.deleteMany({ where: { id: row.id } }).catch(() => {});
     } else {
-      console.warn("[WebPush] send failed:", err?.statusCode || err?.message);
+      console.warn("[WebPush] send failed:", statusCode || err?.message);
     }
+    return {
+      ok: false,
+      statusCode,
+      message: String(err?.body || err?.message || "Unknown error").slice(0, 200),
+    };
   }
 };
 
 export const sendWebPushToUser = async (userId, { title, body, url, tag }) => {
-  if (!userId || !getVapidDetails()) return;
+  const summary = { configured: false, devices: 0, sent: 0, failed: [] };
+  if (!userId || !getVapidDetails()) return summary;
+  summary.configured = true;
   try {
     const rows = await prisma.pushToken.findMany({
       where: { userId, platform: "web" },
       select: { id: true, token: true },
     });
-    if (rows.length === 0) return;
+    summary.devices = rows.length;
+    if (rows.length === 0) return summary;
     const payload = JSON.stringify({ title, body, url: url || "/", tag });
-    await Promise.allSettled(rows.map((row) => sendToRow(row, payload)));
+    const results = await Promise.all(rows.map((row) => sendToRow(row, payload)));
+    for (const result of results) {
+      if (result.ok) summary.sent += 1;
+      else summary.failed.push({ statusCode: result.statusCode, message: result.message });
+    }
   } catch (err) {
     console.warn("[WebPush] sendWebPushToUser error:", err.message);
+    summary.failed.push({ statusCode: 0, message: err.message });
   }
+  return summary;
 };
 
 export const sendWebPushToAll = async ({ title, body, url, tag }, { excludeUserId } = {}) => {

@@ -127,3 +127,12 @@ export const subscribeWebPush = (userId, subscription) =>
 
 export const unsubscribeWebPush = (userId, endpoint) =>
   removeWebPushSubscription(userId, endpoint);
+
+
+export const testWebPush = (userId) =>
+  sendWebPushToUser(userId, {
+    title: "Test notification",
+    body: "Browser notifications are working on this device",
+    url: "/",
+    tag: "test-" + Date.now(),
+  });

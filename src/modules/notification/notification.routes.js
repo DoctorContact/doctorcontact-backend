@@ -33,6 +33,7 @@ router.use(authMiddleware);
 
 router.post("/web-push/subscribe", notificationController.subscribeWebPush);
 router.delete("/web-push/subscribe", notificationController.unsubscribeWebPush);
+router.post("/web-push/test", notificationController.testWebPush);
 
 /**
  * @swagger
