@@ -23,7 +23,7 @@ const BROADCAST_BATCH_SIZE = 1000;
 // 🔔 Saves ONE notification row for EVERY active user (so it shows up in each
 // user's inbox even if they were offline) and also pushes it live over
 // Socket.io to whoever is online right now.
-// Runs in the background — it never blocks or fails the announcement itself.
+// Runs in the background — it never blocks or fails the announcement itself.   
 const broadcastAnnouncementToAllUsers = async (announcement, creatorUserId) => {
   let cursor = null;
 
