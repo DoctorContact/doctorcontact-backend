@@ -1,123 +1,129 @@
 import ApiError from "../../utils/apiError.js";
-import { getIO } from "../../config/socket.config.js";
-import * as notificationRepo from "./notification.repository.js";
-
-// Mobile App Push (Expo)
-import { 
-  getUserPushTokens, 
-  getAllPushTokens, 
+import prisma from "../../config/db.config.js";
+import { emitNewNotification } from "../../sockets/notification.socket.js";
+import {
+  createNotification,
+  findMyNotifications,
+  countMyNotifications,
+  countUnread,
+  findNotificationById,
+  markAsRead as markAsReadRepo,
+  markAllAsRead as markAllAsReadRepo,
+} from "./notification.repository.js";
+import {
+  savePushToken as savePushTokenUtil,
+  getUserPushTokens,
   sendExpoPushNotification,
-  savePushToken
 } from "../../utils/pushNotification.js";
-
-// Web Browser Push
 import {
   getWebPushPublicKey,
   saveWebPushSubscription,
   removeWebPushSubscription,
   sendWebPushToUser,
-  sendWebPushToAll
 } from "../../utils/webPush.js";
 
-export const notifyUser = async (userId, { type, title, message, meta = {} }) => {
+// Called internally by other modules (appointment, admin, doctor, etc.)
+// This NEVER throws — a failed notification must never break the action
+// that triggered it (e.g. booking an appointment should still succeed
+// even if writing the notification row fails for some reason).
+export const notifyUser = async ({ userId, type, title, message, meta }) => {
   if (!userId) return null;
   try {
-    // 1. Save to Database
-    const notification = await notificationRepo.createNotification({
-      userId, type, title, message, meta,
-    });
+    const notification = await createNotification({ userId, type, title, message, meta });
+    emitNewNotification(userId, notification);
 
-    // 2. Real-time Socket (Web In-App)
-    const io = getIO();
-    if (io) {
-      io.to(userId).emit("newNotification", notification);
-    }
-
-    // 3. Mobile Push (App/Expo)
-    const mobileTokens = await getUserPushTokens(userId);
-    if (mobileTokens && mobileTokens.length > 0) {
-      sendExpoPushNotification(mobileTokens, {
-        title: title || "Doctor Contact",
-        message: message || "",
-        data: { notificationId: notification.id, ...meta },
-      }).catch(() => {});
-    }
-
-    // 4. Web Browser Push
     sendWebPushToUser(userId, {
       title: title || "Doctor Contact",
       body: message || "",
-      url: meta.url || "/",
+      url: "/",
       tag: notification.id,
     }).catch(() => {});
 
+    // Send remote push notification so closed/killed app receives it in mobile notification bar
+    getUserPushTokens(userId)
+      .then((tokens) => {
+        if (tokens && tokens.length > 0) {
+          return sendExpoPushNotification(tokens, {
+            title: title || "Doctor Contact Alert",
+            message: message || "",
+            data: {
+              notificationId: notification.id,
+              type: type || "ALERT",
+              appointmentId: meta?.appointmentId || undefined,
+              announcementId: meta?.announcementId || undefined,
+              meta: meta || null,
+            },
+          });
+        }
+      })
+      .catch((err) => {
+        console.warn("[Push] Error delivering user push notification:", err.message);
+      });
+
     return notification;
-  } catch (error) {
-    console.error("[Notification] notifyUser error:", error.message);
+  } catch (err) {
+    console.error("notifyUser failed:", err.message);
     return null;
   }
 };
 
-export const broadcastAnnouncementToAllUsers = async ({ title, message, meta = {}, excludeUserId = null }) => {
-  try {
-    const io = getIO();
-    if (io) {
-      io.emit("newAnnouncement", { title, message, ...meta });
-    }
-
-    const mobileTokens = await getAllPushTokens();
-    if (mobileTokens && mobileTokens.length > 0) {
-      sendExpoPushNotification(mobileTokens, {
-        title: title || "Doctor Contact Announcement",
-        message: message || "",
-        data: { type: "ANNOUNCEMENT", ...meta },
-      }).catch(() => {});
-    }
-
-    sendWebPushToAll({
-      title: title || "Doctor Contact Announcement",
-      body: message || "",
-      url: meta.url || "/",
-      tag: "announcement-" + Date.now(),
-    }, { excludeUserId }).catch(() => {});
-    
-    return true;
-  } catch (err) {
-    return false;
-  }
+export const saveUserPushToken = async (pushToken, userId = null, metadata = {}) => {
+  return savePushTokenUtil(pushToken, userId, metadata);
 };
 
-export const getMyNotifications = async (userId, { page, limit }) => {
-  const [notifications, total] = await Promise.all([
-    notificationRepo.findMyNotifications({ userId, page, limit }),
-    notificationRepo.countMyNotifications(userId),
+export const getMyNotifications = async (userId, { page = 1, limit = 20 }) => {
+  const [items, total, unread] = await Promise.all([
+    findMyNotifications({ userId, page, limit }),
+    countMyNotifications(userId),
+    countUnread(userId),
   ]);
-  return {
-    notifications,
-    pagination: { total, page, limit, totalPages: Math.ceil(total / limit) },
-  };
+  return { items, total, unread, page, limit };
 };
 
 export const getUnreadCount = async (userId) => {
-  const count = await notificationRepo.countUnread(userId);
+  const count = await countUnread(userId);
   return { count };
 };
 
 export const markNotificationRead = async (userId, notificationId) => {
-  const notification = await notificationRepo.findNotificationById(notificationId);
+  const notification = await findNotificationById(notificationId);
   if (!notification) throw new ApiError(404, "Notification not found");
-  if (notification.userId !== userId) throw new ApiError(403, "Access denied");
-  return notificationRepo.markAsRead(notificationId);
+  if (notification.userId !== userId) {
+    throw new ApiError(403, "This notification does not belong to you");
+  }
+  return markAsReadRepo(notificationId);
 };
 
 export const markAllNotificationsRead = async (userId) => {
-  return notificationRepo.markAllAsRead(userId);
+  return markAllAsReadRepo(userId);
 };
 
-export const saveUserPushToken = async (pushToken, userId, meta) => {
-  return savePushToken(pushToken, userId, meta);
+export const notifyAdmins = async ({ type = "ADMIN_ALERT", title, message, meta = null }) => {
+  try {
+    const admins = await prisma.user.findMany({
+      where: { role: { in: ["ADMIN", "SUPER_ADMIN"] }, status: "ACTIVE" },
+      select: { id: true },
+    });
+    await Promise.all(
+      admins.map((a) =>
+        notifyUser({
+          userId: a.id,
+          type,
+          title,
+          message,
+          meta,
+        })
+      )
+    );
+  } catch (err) {
+    console.warn("[Push] notifyAdmins failed:", err.message);
+  }
 };
 
 export const getWebPushKey = () => getWebPushPublicKey();
-export const subscribeWebPush = (userId, subscription) => saveWebPushSubscription(userId, subscription);
-export const unsubscribeWebPush = (userId, endpoint) => removeWebPushSubscription(userId, endpoint);
+
+export const subscribeWebPush = (userId, subscription) =>
+  saveWebPushSubscription(userId, subscription);
+
+export const unsubscribeWebPush = (userId, endpoint) =>
+  removeWebPushSubscription(userId, endpoint);

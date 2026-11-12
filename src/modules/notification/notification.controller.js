@@ -15,7 +15,10 @@ export const getUnreadCount = asyncHandler(async (req, res) => {
 });
 
 export const markRead = asyncHandler(async (req, res) => {
-  const notification = await notificationService.markNotificationRead(req.user.id, req.params.notificationId);
+  const notification = await notificationService.markNotificationRead(
+    req.user.id,
+    req.params.notificationId
+  );
   res.status(200).json(new ApiResponse(true, "Notification marked as read", { notification }));
 });
 
@@ -26,20 +29,29 @@ export const markAllRead = asyncHandler(async (req, res) => {
 
 export const registerPushToken = asyncHandler(async (req, res) => {
   const { pushToken, platform, deviceId } = req.body || {};
-  if (!pushToken) return res.status(400).json(new ApiResponse(false, "pushToken is required", null));
-  await notificationService.saveUserPushToken(pushToken, req.user?.id || null, { platform: platform || "android", deviceId: deviceId || null });
+  if (!pushToken) {
+    return res.status(400).json(new ApiResponse(false, "pushToken is required", null));
+  }
+  await notificationService.saveUserPushToken(pushToken, req.user?.id || null, {
+    platform: platform || "android",
+    deviceId: deviceId || null,
+  });
   res.status(200).json(new ApiResponse(true, "Push token registered successfully", null));
 });
 
 export const getWebPushKey = asyncHandler(async (req, res) => {
   const publicKey = notificationService.getWebPushKey();
-  if (!publicKey) return res.status(503).json(new ApiResponse(false, "Browser push is not configured", null));
+  if (!publicKey) {
+    return res.status(503).json(new ApiResponse(false, "Browser push is not configured", null));
+  }
   res.status(200).json(new ApiResponse(true, "Web push key", { publicKey }));
 });
 
 export const subscribeWebPush = asyncHandler(async (req, res) => {
   const ok = await notificationService.subscribeWebPush(req.user.id, req.body?.subscription);
-  if (!ok) return res.status(400).json(new ApiResponse(false, "Invalid push subscription", null));
+  if (!ok) {
+    return res.status(400).json(new ApiResponse(false, "Invalid push subscription", null));
+  }
   res.status(200).json(new ApiResponse(true, "Browser notifications enabled", null));
 });
 

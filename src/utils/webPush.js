@@ -14,7 +14,7 @@ const getVapidDetails = () => {
     return null;
   }
   vapidDetails = {
-    subject: process.env.VAPID_SUBJECT || "mailto:support@doctorcontact.in",
+    subject: process.env.VAPID_SUBJECT || "mailto:doctorcontact620@gmail.com",
     publicKey,
     privateKey,
   };
@@ -49,6 +49,7 @@ export const saveWebPushSubscription = async (userId, subscription) => {
       NOT: { token },
     },
   });
+
   return true;
 };
 
@@ -105,7 +106,10 @@ export const sendWebPushToAll = async ({ title, body, url, tag }, { excludeUserI
     let cursor = null;
     while (true) {
       const rows = await prisma.pushToken.findMany({
-        where: { platform: "web", ...(excludeUserId ? { userId: { not: excludeUserId } } : {}) },
+        where: {
+          platform: "web",
+          ...(excludeUserId ? { userId: { not: excludeUserId } } : {}),
+        },
         select: { id: true, token: true },
         orderBy: { id: "asc" },
         take: 200,
