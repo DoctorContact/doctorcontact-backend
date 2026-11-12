@@ -16,6 +16,7 @@ import { emitGlobalAnnouncement, emitClinicAnnouncement } from "../../sockets/an
 import { emitNewNotification } from "../../sockets/notification.socket.js";
 import { notifyUser } from "../notification/notification.service.js";
 import { getAllPushTokens, sendExpoPushNotification } from "../../utils/pushNotification.js";
+import { sendWebPushToAll } from "../../utils/webPush.js";
 
 const BROADCAST_BATCH_SIZE = 1000;
 
@@ -112,6 +113,16 @@ export const publishPlatformAnnouncement = async (
     });
 
   // 🔔 Send to every active user's notification inbox (background, non-blocking)
+  sendWebPushToAll(
+    {
+      title: title || "Doctor Contact Announcement",
+      body: message || "",
+      url: "/",
+      tag: "announcement-" + announcement.id,
+    },
+    { excludeUserId: adminUserId }
+  ).catch(() => {});
+
   setImmediate(() => {
     broadcastAnnouncementToAllUsers(announcement, adminUserId).catch((err) =>
       console.error("Announcement broadcast to users failed:", err)
@@ -154,7 +165,7 @@ export const publishClinicAnnouncement = async (clinicUserId, { type, title, mes
           clinicId: clinic.id,
           ...(doctorId ? { doctorId } : {}),
           date: { gte: today },
-          status: { in: ["CONFIRMED", "PENDING"] },
+          status: { in: ["WAITING", "CHECKED_IN"] },
         },
         include: {
           patient: { select: { userId: true } },

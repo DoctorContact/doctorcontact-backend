@@ -38,3 +38,24 @@ export const registerPushToken = asyncHandler(async (req, res) => {
   });
   res.status(200).json(new ApiResponse(true, "Push token registered successfully", null));
 });
+
+export const getWebPushKey = asyncHandler(async (req, res) => {
+  const publicKey = notificationService.getWebPushKey();
+  if (!publicKey) {
+    return res.status(503).json(new ApiResponse(false, "Browser push is not configured", null));
+  }
+  res.status(200).json(new ApiResponse(true, "Web push key", { publicKey }));
+});
+
+export const subscribeWebPush = asyncHandler(async (req, res) => {
+  const ok = await notificationService.subscribeWebPush(req.user.id, req.body?.subscription);
+  if (!ok) {
+    return res.status(400).json(new ApiResponse(false, "Invalid push subscription", null));
+  }
+  res.status(200).json(new ApiResponse(true, "Browser notifications enabled", null));
+});
+
+export const unsubscribeWebPush = asyncHandler(async (req, res) => {
+  await notificationService.unsubscribeWebPush(req.user.id, req.body?.endpoint);
+  res.status(200).json(new ApiResponse(true, "Browser notifications disabled", null));
+});

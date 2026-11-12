@@ -15,6 +15,12 @@ import {
   getUserPushTokens,
   sendExpoPushNotification,
 } from "../../utils/pushNotification.js";
+import {
+  getWebPushPublicKey,
+  saveWebPushSubscription,
+  removeWebPushSubscription,
+  sendWebPushToUser,
+} from "../../utils/webPush.js";
 
 // Called internally by other modules (appointment, admin, doctor, etc.)
 // This NEVER throws — a failed notification must never break the action
@@ -25,6 +31,13 @@ export const notifyUser = async ({ userId, type, title, message, meta }) => {
   try {
     const notification = await createNotification({ userId, type, title, message, meta });
     emitNewNotification(userId, notification);
+
+    sendWebPushToUser(userId, {
+      title: title || "Doctor Contact",
+      body: message || "",
+      url: "/",
+      tag: notification.id,
+    }).catch(() => {});
 
     // Send remote push notification so closed/killed app receives it in mobile notification bar
     getUserPushTokens(userId)
@@ -106,3 +119,11 @@ export const notifyAdmins = async ({ type = "ADMIN_ALERT", title, message, meta 
     console.warn("[Push] notifyAdmins failed:", err.message);
   }
 };
+
+export const getWebPushKey = () => getWebPushPublicKey();
+
+export const subscribeWebPush = (userId, subscription) =>
+  saveWebPushSubscription(userId, subscription);
+
+export const unsubscribeWebPush = (userId, endpoint) =>
+  removeWebPushSubscription(userId, endpoint);

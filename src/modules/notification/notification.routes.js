@@ -27,7 +27,12 @@ const router = Router();
  */
 router.post("/push-token", optionalAuth, notificationController.registerPushToken);
 
+router.get("/web-push-key", notificationController.getWebPushKey);
+
 router.use(authMiddleware);
+
+router.post("/web-push/subscribe", notificationController.subscribeWebPush);
+router.delete("/web-push/subscribe", notificationController.unsubscribeWebPush);
 
 /**
  * @swagger
