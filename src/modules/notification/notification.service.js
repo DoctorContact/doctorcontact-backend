@@ -1,125 +1,162 @@
 import ApiError from "../../utils/apiError.js";
-import prisma from "../../config/db.config.js";
-import { emitNewNotification } from "../../sockets/notification.socket.js";
-import {
-  createNotification,
-  findMyNotifications,
-  countMyNotifications,
-  countUnread,
-  findNotificationById,
-  markAsRead as markAsReadRepo,
-  markAllAsRead as markAllAsReadRepo,
-} from "./notification.repository.js";
-import {
-  savePushToken as savePushTokenUtil,
-  getUserPushTokens,
+import { getIO } from "../../config/socket.config.js";
+import * as notificationRepo from "./notification.repository.js";
+
+// 📱 Mobile App Push (Expo)
+import { 
+  getUserPushTokens, 
+  getAllPushTokens, 
   sendExpoPushNotification,
+  savePushToken
 } from "../../utils/pushNotification.js";
+
+// 💻 Web Browser Push (Chrome, Safari, Edge)
 import {
   getWebPushPublicKey,
   saveWebPushSubscription,
   removeWebPushSubscription,
   sendWebPushToUser,
+  sendWebPushToAll
 } from "../../utils/webPush.js";
 
-// Called internally by other modules (appointment, admin, doctor, etc.)
-// This NEVER throws — a failed notification must never break the action
-// that triggered it (e.g. booking an appointment should still succeed
-// even if writing the notification row fails for some reason).
-export const notifyUser = async ({ userId, type, title, message, meta }) => {
+// ==========================================
+// 🔴 CORE FUNCTION: Notify Single User
+// ==========================================
+export const notifyUser = async (userId, { type, title, message, meta = {} }) => {
   if (!userId) return null;
-  try {
-    const notification = await createNotification({ userId, type, title, message, meta });
-    emitNewNotification(userId, notification);
 
+  try {
+    // 1. Save to Database
+    const notification = await notificationRepo.createNotification({
+      userId,
+      type,
+      title,
+      message,
+      meta,
+    });
+
+    // 2. Send Real-time Socket Event (In-App Bell)
+    const io = getIO();
+    if (io) {
+      io.to(userId).emit("newNotification", notification);
+    }
+
+    const payloadData = { notificationId: notification.id, ...meta };
+
+    // 3. Send Mobile App Push (Android/iOS via Expo)
+    getUserPushTokens(userId).then((mobileTokens) => {
+      if (mobileTokens && mobileTokens.length > 0) {
+        sendExpoPushNotification(mobileTokens, {
+          title: title || "Doctor Contact",
+          message: message || "",
+          data: payloadData,
+        }).catch(() => {});
+      }
+    }).catch(() => {});
+
+    // 4. Send Web Browser Push (Chrome/Safari)
     sendWebPushToUser(userId, {
       title: title || "Doctor Contact",
       body: message || "",
-      url: "/",
+      url: meta.url || "/",
       tag: notification.id,
     }).catch(() => {});
 
-    // Send remote push notification so closed/killed app receives it in mobile notification bar
-    getUserPushTokens(userId)
-      .then((tokens) => {
-        if (tokens && tokens.length > 0) {
-          return sendExpoPushNotification(tokens, {
-            title: title || "Doctor Contact Alert",
-            message: message || "",
-            data: {
-              notificationId: notification.id,
-              type: type || "ALERT",
-              appointmentId: meta?.appointmentId || undefined,
-              announcementId: meta?.announcementId || undefined,
-              meta: meta || null,
-            },
-          });
-        }
-      })
-      .catch((err) => {
-        console.warn("[Push] Error delivering user push notification:", err.message);
-      });
-
     return notification;
-  } catch (err) {
-    console.error("notifyUser failed:", err.message);
+  } catch (error) {
+    console.error("[Notification] notifyUser error:", error.message);
     return null;
   }
 };
 
-export const saveUserPushToken = async (pushToken, userId = null, metadata = {}) => {
-  return savePushTokenUtil(pushToken, userId, metadata);
+// ==========================================
+// 🔴 CORE FUNCTION: Broadcast to All Users
+// ==========================================
+export const broadcastAnnouncement = async ({ title, message, meta = {}, excludeUserId = null }) => {
+  try {
+    const payloadData = { type: "ANNOUNCEMENT", ...meta };
+
+    // 1. Send Real-time Socket Event (In-App Bell to everyone online)
+    const io = getIO();
+    if (io) {
+      io.emit("newAnnouncement", { title, message, ...payloadData });
+    }
+
+    // 2. Send Mobile App Push (Android/iOS via Expo)
+    getAllPushTokens().then((allMobileTokens) => {
+      if (allMobileTokens && allMobileTokens.length > 0) {
+        sendExpoPushNotification(allMobileTokens, {
+          title: title || "Doctor Contact Announcement",
+          message: message || "",
+          data: payloadData,
+        }).catch(() => {});
+      }
+    }).catch(() => {});
+
+    // 3. Send Web Browser Push (Chrome/Safari)
+    sendWebPushToAll({
+      title: title || "Doctor Contact Announcement",
+      body: message || "",
+      url: meta.url || "/",
+      tag: "announcement-" + Date.now(),
+    }, { excludeUserId }).catch(() => {});
+
+    return true;
+  } catch (error) {
+    console.error("[Notification] broadcastAnnouncement error:", error.message);
+    return false;
+  }
 };
 
-export const getMyNotifications = async (userId, { page = 1, limit = 20 }) => {
-  const [items, total, unread] = await Promise.all([
-    findMyNotifications({ userId, page, limit }),
-    countMyNotifications(userId),
-    countUnread(userId),
+// ==========================================
+// Standard Notification API Services
+// ==========================================
+export const getMyNotifications = async (userId, { page, limit }) => {
+  const [notifications, total] = await Promise.all([
+    notificationRepo.findMyNotifications({ userId, page, limit }),
+    notificationRepo.countMyNotifications(userId),
   ]);
-  return { items, total, unread, page, limit };
+
+  return {
+    notifications,
+    pagination: {
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    },
+  };
 };
 
 export const getUnreadCount = async (userId) => {
-  const count = await countUnread(userId);
+  const count = await notificationRepo.countUnread(userId);
   return { count };
 };
 
 export const markNotificationRead = async (userId, notificationId) => {
-  const notification = await findNotificationById(notificationId);
+  const notification = await notificationRepo.findNotificationById(notificationId);
   if (!notification) throw new ApiError(404, "Notification not found");
   if (notification.userId !== userId) {
-    throw new ApiError(403, "This notification does not belong to you");
+    throw new ApiError(403, "You do not have permission to read this notification");
   }
-  return markAsReadRepo(notificationId);
+
+  return notificationRepo.markAsRead(notificationId);
 };
 
 export const markAllNotificationsRead = async (userId) => {
-  return markAllAsReadRepo(userId);
+  return notificationRepo.markAllAsRead(userId);
 };
 
-export const notifyAdmins = async ({ type = "ADMIN_ALERT", title, message, meta = null }) => {
-  try {
-    const admins = await prisma.user.findMany({
-      where: { role: { in: ["ADMIN", "SUPER_ADMIN"] }, status: "ACTIVE" },
-      select: { id: true },
-    });
-    await Promise.all(
-      admins.map((a) =>
-        notifyUser({
-          userId: a.id,
-          type,
-          title,
-          message,
-          meta,
-        })
-      )
-    );
-  } catch (err) {
-    console.warn("[Push] notifyAdmins failed:", err.message);
-  }
+// ==========================================
+// Mobile Push Services (Expo)
+// ==========================================
+export const saveUserPushToken = async (pushToken, userId, meta) => {
+  return savePushToken(pushToken, userId, meta);
 };
 
+// ==========================================
+// Web Push Services (Browser)
+// ==========================================
 export const getWebPushKey = () => getWebPushPublicKey();
 
 export const subscribeWebPush = (userId, subscription) =>
@@ -128,11 +165,11 @@ export const subscribeWebPush = (userId, subscription) =>
 export const unsubscribeWebPush = (userId, endpoint) =>
   removeWebPushSubscription(userId, endpoint);
 
-
-export const testWebPush = (userId) =>
-  sendWebPushToUser(userId, {
-    title: "Test notification",
-    body: "Browser notifications are working on this device",
+export const testWebPush = async (userId) => {
+  return sendWebPushToUser(userId, {
+    title: "Test Successful!",
+    body: "Your browser notifications are working perfectly.",
     url: "/",
     tag: "test-" + Date.now(),
   });
+};
