@@ -22,10 +22,6 @@ import {
   sendWebPushToUser,
 } from "../../utils/webPush.js";
 
-// Called internally by other modules (appointment, admin, doctor, etc.)
-// This NEVER throws — a failed notification must never break the action
-// that triggered it (e.g. booking an appointment should still succeed
-// even if writing the notification row fails for some reason).
 export const notifyUser = async ({ userId, type, title, message, meta }) => {
   if (!userId) return null;
   try {
@@ -39,7 +35,6 @@ export const notifyUser = async ({ userId, type, title, message, meta }) => {
       tag: notification.id,
     }).catch(() => {});
 
-    // Send remote push notification so closed/killed app receives it in mobile notification bar
     getUserPushTokens(userId)
       .then((tokens) => {
         if (tokens && tokens.length > 0) {

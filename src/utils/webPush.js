@@ -1,27 +1,26 @@
 import { sendNotification } from "web-push";
 import prisma from "../config/db.config.js";
 
-let vapidDetails = null;
-let checked = false;
-
 const getVapidDetails = () => {
-  if (checked) return vapidDetails;
-  checked = true;
-  const publicKey = process.env.VAPID_PUBLIC_KEY;
-  const privateKey = process.env.VAPID_PRIVATE_KEY;
+  // .env থেকে ডেটা নিয়ে স্পেস (space) থাকলে সেটা ডিলিট করে দিচ্ছি
+  const publicKey = process.env.VAPID_PUBLIC_KEY?.trim();
+  const privateKey = process.env.VAPID_PRIVATE_KEY?.trim();
+  let subject = process.env.VAPID_SUBJECT?.trim() || "mailto:doctorcontact620@gmail.com";
+  
+  // যদি কেউ mailto: লিখতে ভুলে যায়, তাহলে অটোমেটিক বসিয়ে দেবে
+  if (!subject.startsWith("mailto:") && !subject.startsWith("https://")) {
+    subject = `mailto:${subject}`;
+  }
+
   if (!publicKey || !privateKey) {
     console.warn("[WebPush] VAPID keys missing in .env - browser push is disabled");
     return null;
   }
-  vapidDetails = {
-    subject: process.env.VAPID_SUBJECT || "mailto:doctorcontact620@gmail.com",
-    publicKey,
-    privateKey,
-  };
-  return vapidDetails;
+  
+  return { subject, publicKey, privateKey };
 };
 
-export const getWebPushPublicKey = () => process.env.VAPID_PUBLIC_KEY || null;
+export const getWebPushPublicKey = () => process.env.VAPID_PUBLIC_KEY?.trim() || null;
 
 const normalizeSubscription = (subscription) => {
   if (!subscription || typeof subscription.endpoint !== "string") return null;
@@ -43,11 +42,7 @@ export const saveWebPushSubscription = async (userId, subscription) => {
   });
 
   await prisma.pushToken.deleteMany({
-    where: {
-      platform: "web",
-      token: { contains: subscription.endpoint },
-      NOT: { token },
-    },
+    where: { platform: "web", token: { contains: subscription.endpoint }, NOT: { token } },
   });
 
   return true;
@@ -66,37 +61,65 @@ const sendToRow = async (row, payload) => {
     subscription = JSON.parse(row.token);
   } catch {
     await prisma.pushToken.deleteMany({ where: { id: row.id } }).catch(() => {});
-    return;
+    return { ok: false, statusCode: 0, message: "Saved subscription was unreadable" };
   }
+
+  const vapidDetails = getVapidDetails();
+  if (!vapidDetails) return { ok: false, statusCode: 503, message: "Server VAPID keys missing" };
 
   try {
     await sendNotification(subscription, payload, {
-      vapidDetails: getVapidDetails(),
+      vapidDetails,
       TTL: 3600,
       urgency: "high",
     });
+    return { ok: true };
   } catch (err) {
-    if (err?.statusCode === 404 || err?.statusCode === 410) {
+    const statusCode = err?.statusCode || 0;
+    
+    // 🟢 NEW: গুগলের সার্ভার থেকে আসা আসল এরর মেসেজটা প্রিন্ট করবে
+    console.log("==================================================");
+    console.error("[WebPush FCM Error] Status:", statusCode);
+    console.error("[WebPush FCM Error] Body:", err?.body);
+    console.log("==================================================");
+
+    if (statusCode === 404 || statusCode === 410) {
       await prisma.pushToken.deleteMany({ where: { id: row.id } }).catch(() => {});
-    } else {
-      console.warn("[WebPush] send failed:", err?.statusCode || err?.message);
     }
+    
+    return {
+      ok: false,
+      statusCode,
+      message: String(err?.body || err?.message || "Unknown error").slice(0, 200),
+    };
   }
 };
 
 export const sendWebPushToUser = async (userId, { title, body, url, tag }) => {
-  if (!userId || !getVapidDetails()) return;
+  const summary = { configured: false, devices: 0, sent: 0, failed: [] };
+  if (!userId || !getVapidDetails()) return summary;
+  
+  summary.configured = true;
   try {
     const rows = await prisma.pushToken.findMany({
       where: { userId, platform: "web" },
       select: { id: true, token: true },
     });
-    if (rows.length === 0) return;
+    
+    summary.devices = rows.length;
+    if (rows.length === 0) return summary;
+    
     const payload = JSON.stringify({ title, body, url: url || "/", tag });
-    await Promise.allSettled(rows.map((row) => sendToRow(row, payload)));
+    const results = await Promise.all(rows.map((row) => sendToRow(row, payload)));
+    
+    for (const result of results) {
+      if (result.ok) summary.sent += 1;
+      else summary.failed.push({ statusCode: result.statusCode, message: result.message });
+    }
   } catch (err) {
-    console.warn("[WebPush] sendWebPushToUser error:", err.message);
+    summary.failed.push({ statusCode: 0, message: err.message });
   }
+  return summary;
 };
 
 export const sendWebPushToAll = async ({ title, body, url, tag }, { excludeUserId } = {}) => {
@@ -120,7 +143,5 @@ export const sendWebPushToAll = async ({ title, body, url, tag }, { excludeUserI
       cursor = rows[rows.length - 1].id;
       if (rows.length < 200) break;
     }
-  } catch (err) {
-    console.warn("[WebPush] sendWebPushToAll error:", err.message);
-  }
+  } catch (err) {}
 };
